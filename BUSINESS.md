@@ -185,3 +185,20 @@ provider/protocol for "calendar integration"):
 - Mobile-responsive design improvements.
 - Real-time mood updates (WebSockets).
 - Calendar integration.
+
+Identified during the requirements pass above (not from the README) —
+these aren't vague so much as unscoped: each needs a decision only the
+project owner can make before it's a testable `REQ-*` (a CI provider and
+which checks gate merges; whether login should be throttled and by what
+rule; whether "forgot password" needs email delivery or some other
+channel; how token refresh should behave, since the current 30-minute
+expiry with no renewal path is deliberate per `CLAUDE.md`, not a bug):
+
+- No CI pipeline running `pytest`/`ruff` automatically on push/PR.
+- `SECRET_KEY` (`auth.py`) and `NICEGUI_STORAGE_SECRET` (`app.py`, added
+  for the frontend epic) both fall back to a hardcoded placeholder string
+  if their env var is unset, rather than failing startup — same pattern,
+  same fix needed in both places once decided.
+- No rate limiting on `POST /auth/login` (or any other endpoint).
+- No refresh-token or password-reset flow — once an access token
+  expires, the only way back in is logging in again with the password.

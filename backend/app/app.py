@@ -10,26 +10,38 @@ It provides comprehensive RESTful API endpoints for:
 - Data export and analytics
 """
 
-from fastapi import FastAPI, HTTPException, Depends, status
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+import os
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from database import get_db, init_db
-from models import UserModel, MoodModel, EntryModel
-from schemas import (
-    UserCreate, UserUpdate, UserResponse, UserWithMoodsAndEntries,
-    MoodCreate, MoodUpdate, MoodResponse,
-    EntryCreate, EntryUpdate, EntryResponse,
-    Token, LoginRequest
-)
+import frontend
 from auth import (
-    hash_password, authenticate_user, create_access_token,
-    get_current_active_user, ACCESS_TOKEN_EXPIRE_MINUTES
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    authenticate_user,
+    create_access_token,
+    get_current_active_user,
+    hash_password,
 )
+from database import get_db, init_db
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from models import EntryModel, MoodModel, UserModel
+from nicegui import ui
+from schemas import (
+    EntryCreate,
+    EntryResponse,
+    EntryUpdate,
+    LoginRequest,
+    MoodCreate,
+    MoodResponse,
+    MoodUpdate,
+    Token,
+    UserCreate,
+    UserResponse,
+    UserUpdate,
+    UserWithMoodsAndEntries,
+)
+from sqlalchemy.orm import Session
 
 # Create the FastAPI application instance
 app = FastAPI(
@@ -38,22 +50,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Mount the static files directory
-app.mount("/static", StaticFiles(directory="static"), name='static')
-
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
     """Initialize database tables on application startup"""
     init_db()
-
-
-# ==================== ROOT & UI ENDPOINTS ====================
-
-@app.get("/", tags=["UI"])
-def read_root():
-    """Serve the main mood board interface"""
-    return FileResponse("index.html")
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
@@ -732,8 +733,9 @@ async def get_mood_statistics(
     - **start_date**: Optional start date (ISO format)
     - **end_date**: Optional end date (ISO format)
     """
-    from analytics import calculate_mood_statistics
     from datetime import datetime as dt
+
+    from analytics import calculate_mood_statistics
     
     # Users can only access their own analytics
     if current_user.username != username:
@@ -847,8 +849,9 @@ async def export_moods_csv(
     """
     import csv
     import io
-    from fastapi.responses import StreamingResponse
+
     from analytics import get_mood_quadrant_name
+    from fastapi.responses import StreamingResponse
 
     # Users can only export their own data
     if current_user.username != username:
@@ -936,8 +939,9 @@ async def export_moods_json(
     - **include_entries**: Include journal entries in export
     """
     import json
-    from fastapi.responses import StreamingResponse
+
     from analytics import get_mood_quadrant_name
+    from fastapi.responses import StreamingResponse
 
     # Users can only export their own data
     if current_user.username != username:
@@ -1048,13 +1052,14 @@ async def export_moods_pdf(
     - **start_date**: Optional start date (YYYY-MM-DD)
     - **end_date**: Optional end date (YYYY-MM-DD)
     """
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib import colors
     import io
+
     from fastapi.responses import StreamingResponse
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     
     # Users can only export their own data
     if current_user.username != username:
@@ -1195,3 +1200,14 @@ async def export_moods_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+# ==================== FRONTEND ====================
+# NiceGUI mounted onto this same FastAPI app; see ARCHITECTURE.md's FE-1
+# entry for why page registration is a function call, not import-time
+# decorators, and why this block stays last (after every REST route).
+
+STORAGE_SECRET = os.getenv("NICEGUI_STORAGE_SECRET", "change-me-in-production")
+
+frontend.create_pages()
+ui.run_with(app, mount_path="/", storage_secret=STORAGE_SECRET)
