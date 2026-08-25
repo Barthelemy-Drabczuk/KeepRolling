@@ -1,7 +1,10 @@
-"""Characterization tests for REQ-USER-1..5 (see BUSINESS.md).
+"""Tests for REQ-USER-1..6 (see BUSINESS.md).
 
-The behavior these pin down is already implemented by the user endpoints
-in ``app.py``.
+REQ-USER-1..5 are characterization tests: the behavior they pin down is
+already implemented by the user endpoints in ``app.py``. REQ-USER-6 is a
+red-green requirement — ``get_user`` now declares
+``get_current_active_user`` as a dependency, closing the gap where
+``GET /users/{username}`` was previously fully unauthenticated.
 """
 
 import pytest
@@ -288,3 +291,61 @@ def test_full_view_of_another_user_returns_403(client, auth_headers, make_user):
     response = client.get("/users/bob/full", headers=headers)
 
     assert response.status_code == 403
+
+
+# ==================== REQ-USER-6 ====================
+
+
+def test_get_user_without_authorization_header_returns_401(client, make_user):
+    """REQ-USER-6: GET /users/{username} requires authentication."""
+    make_user("alice")
+
+    response = client.get("/users/alice")
+
+    assert response.status_code == 401
+
+
+def test_get_user_with_an_invalid_token_returns_401(client, make_user):
+    """REQ-USER-6: a garbage bearer token does not satisfy the auth requirement."""
+    make_user("alice")
+
+    response = client.get("/users/alice", headers={"Authorization": "Bearer not-a-real-jwt"})
+
+    assert response.status_code == 401
+
+
+def test_authenticated_caller_gets_their_own_basic_profile(client, auth_headers):
+    """REQ-USER-6: an authenticated caller reads their own id/username/created_at."""
+    headers = auth_headers("alice")
+
+    response = client.get("/users/alice", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert isinstance(body["id"], int)
+    assert body["username"] == "alice"
+    assert body["created_at"]
+
+
+def test_authenticated_caller_gets_another_users_basic_profile(client, auth_headers, make_user):
+    """REQ-USER-6: lookup is not self-only — any authenticated caller gets 200."""
+    headers = auth_headers("alice")
+    make_user("bob", "bobspassword123")
+
+    response = client.get("/users/bob", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert isinstance(body["id"], int)
+    assert body["username"] == "bob"
+    assert body["created_at"]
+
+
+def test_basic_profile_exposes_no_password_or_child_data(client, auth_headers, make_user):
+    """REQ-USER-6: the basic profile is id/username/created_at only."""
+    headers = auth_headers("alice")
+    make_user("bob", "bobspassword123")
+
+    response = client.get("/users/bob", headers=headers)
+
+    assert set(response.json()) == {"id", "username", "created_at"}

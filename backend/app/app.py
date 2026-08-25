@@ -128,10 +128,14 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/users/{username}", response_model=UserResponse, tags=["Users"])
-def get_user(username: str, db: Session = Depends(get_db)):
+def get_user(
+    username: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_active_user)
+):
     """
-    Retrieve user information by username.
-    
+    Retrieve user information by username (requires authentication).
+
     - **username**: The username to look up
     """
     user = db.query(UserModel).filter(UserModel.username == username).first()

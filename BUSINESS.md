@@ -48,6 +48,11 @@ under "Open Questions" rather than guessed into a REQ.
   user's profile together with all of their moods and entries, and shall
   return 403 when the authenticated caller's username differs from
   `{username}`.
+- **REQ-USER-6**: `GET /users/{username}` shall require the caller to be
+  authenticated (401 without a valid token), and shall return the target
+  user's `id`/`username`/`created_at` for any authenticated caller — it is
+  not restricted to the caller looking up their own username (that
+  restriction is what `/full` is for). Resolves OQ-1 below.
 
 ## Moods
 
@@ -139,13 +144,11 @@ Requirements blocked on disambiguation — per the well-formedness check in
 `CLAUDE.md`, these are not written as `REQ-*` until answered, because
 guessing the answer risks locking in the wrong access rule.
 
-- **OQ-1**: `GET /users/{username}` (`app.py`) currently has no
-  authentication dependency, so any caller — authenticated or not — can
-  fetch any user's `id`/`username`/`created_at`. Every other per-user
-  route requires the caller's identity to match `{username}`. Is this
-  profile lookup intentionally public, or is the missing auth check a
-  gap? Needs an answer before a `REQ-USER-*` can state the intended
-  access rule for this specific endpoint.
+- ~~**OQ-1**~~ — resolved: `GET /users/{username}` shall require
+  authentication (any authenticated caller, not self-only). See
+  REQ-USER-6. `app.py`'s `get_user` does not yet conform (no auth
+  dependency currently) — closing that gap is this requirement's
+  red-green step.
 
 ## Backlog (not yet requirements)
 
