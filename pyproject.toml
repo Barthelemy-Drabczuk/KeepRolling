@@ -1,0 +1,70 @@
+[project]
+name = "moodometer"
+version = "0.1.0"
+description = "A web-based mood tracking application using the circumplex model of affect"
+authors = [{ name = "Percevase" }]
+requires-python = ">= 3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "python-dotenv>=1.0.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "alembic>=1.13.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-jose[cryptography]>=3.3.0",
+    "pydantic>=2.0.0",
+]
+
+[dependency-groups]
+test = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+    "pytest-asyncio>=0.23.0",
+]
+viz = [
+    "plotly>=5.18.0",
+    "pandas>=2.1.0",
+]
+dev = [
+    "ruff>=0.11.0",
+]
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend/app"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+moodometer = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+dev = "uvicorn backend.app.app:app --reload --host 0.0.0.0 --port 8000"
+test = "pytest"
+lint = "ruff check ."
+format-check = "ruff format --check ."
+format = "ruff format ."
+db-test = "python backend/db.py"
+db-migrate = "alembic upgrade head"
+db-revision = "alembic revision --autogenerate -m"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+test = { features = ["test"], solve-group = "default" }
+viz = { features = ["viz"], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+full = { features = ["test", "viz", "dev"], solve-group = "default" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [".venv", ".pixi", "app_new.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

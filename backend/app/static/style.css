@@ -1,0 +1,173 @@
+/**
+ * Moodometer Mood Board Styles
+ *
+ * This stylesheet defines the visual layout and color scheme for the Moodometer
+ * mood tracking interface. The design uses a flexbox-based grid system to create
+ * a 2D emotional space with four main quadrants and nested mood zones.
+ *
+ * Color Scheme:
+ * - Warm colors (browns, oranges): Unpleasant emotions
+ * - Cool colors (blues, grays): Low energy states
+ * - Bright colors (yellows, beiges): Pleasant/optimistic emotions
+ * - Darker shades: More intense negative emotions
+ */
+
+/* ==================== MAIN CONTAINER ==================== */
+
+/* Main display container - uses flexbox column layout for vertical stacking */
+#display {
+    display: flex;
+    flex-direction: column;
+    background-color: blue;
+    width: 100vw;  /* Full viewport width */
+    height: 100vh; /* Full viewport height */
+}
+
+/* ==================== HEADER SECTION ==================== */
+
+/* Top header section containing the application title */
+#top {
+    background-color: green;
+    width: 100vw;
+    height: 30vh; /* 30% of viewport height */
+}
+
+/* ==================== MIDDLE SECTION (MOOD BOARD) ==================== */
+
+/* Middle section containing the energy scale and mood grid */
+#mid {
+    display: flex;
+    flex-direction: row; /* Horizontal layout: scale on left, mood board on right */
+    background-color: yellow;
+    width: 100vw;
+    height: 40vh; /* 40% of viewport height - main interactive area */
+}
+
+/* ==================== ENERGY SCALE (LEFT SIDE) ==================== */
+
+/* Vertical energy scale indicator showing High Energy <-> Low Energy */
+#scale {
+    display: flex;
+    flex-direction: column; /* Vertical stacking of scale elements */
+    background-color: magenta;
+    width: 20vw;  /* 20% of viewport width */
+    height: inherit;
+}
+
+/* Arrow element (currently unused rotation) */
+#arrow {
+    /* transform: rotate(-90deg); */
+    /* Could be used to rotate the arrow for vertical orientation */
+}
+
+/* ==================== MOOD BOARD GRID ==================== */
+
+/* Main mood board container - holds the 2x2 grid of mood quadrants */
+#moodboard {
+    width: 80vw;  /* 80% of viewport width - main interactive area */
+    height: inherit;
+}
+
+/* ==================== TOP ROW (HIGH ENERGY MOODS) ==================== */
+
+/* Top row container - holds high energy mood zones */
+#top-line {
+    display: flex;
+    flex-direction: row; /* Horizontal layout for left/right quadrants */
+    background-color: purple;
+    width: 100%;
+    height: 50%; /* Takes up half of the mood board height */
+}
+
+/* Top-left quadrant: High Energy + Unpleasant */
+/* "Fuck it we ball" - Determined despite adversity */
+#top-left {
+    background-color: #783024; /* Dark reddish-brown - intense, unpleasant */
+    width: 50%;
+    height: 100%;
+    text-align: center;
+}
+
+/* Top-right quadrant: High Energy + Pleasant */
+/* "We are so fucking back" - Optimistic recovery */
+#top-right {
+    background-color: #E4C181; /* Warm beige - pleasant, energetic */
+    width: 50%;
+    height: 100%;
+    text-align: center;
+}
+
+/* Nested zone within top-right: Peak excitement */
+/* "Let's fucking goooo" - Maximum energy and positivity */
+#tr-child {
+    background-color: #F1DE91; /* Bright yellow - highest positivity */
+    width: 50%;
+    height: 50%;
+    position: relative;
+    bottom: 15%;  /* Offset upward to show layering */
+    left: 50%;    /* Positioned in the right half */
+    z-index: 1;   /* Appears above parent */
+    text-align: inherit;
+}
+
+/* ==================== BOTTOM ROW (LOW ENERGY MOODS) ==================== */
+
+/* Bottom row container - holds low energy mood zones */
+#bot-line {
+    display: flex;
+    flex-direction: row; /* Horizontal layout for left/right quadrants */
+    background-color: orange;
+    width: 100%;
+    height: 50%; /* Takes up half of the mood board height */
+}
+
+/* Bottom-left quadrant: Low Energy + Unpleasant */
+/* "It is what it is" - Acceptance of difficult circumstances */
+#bottom-left {
+    background-color: #D99C6D; /* Muted orange-brown - low energy, unpleasant */
+    width: 50%;
+    height: 100%;
+    text-align: center;
+}
+
+/* First nested level: Deeper pessimism */
+/* "It's so over" - More intense negative emotion */
+#bl-child {
+    background-color: #99A9C0; /* Cool blue-gray - deeper sadness */
+    width: 50%;
+    height: 50%;
+    position: relative;
+    top: 30%;     /* Offset downward to show depth */
+    z-index: 1;   /* Appears above parent */
+    text-align: inherit;
+}
+
+/* Second nested level: Lowest emotional state */
+/* "Mom would be sad" - Deepest level of despair */
+#bl-grandchild {
+    background-color: #7A8B9D; /* Darker blue-gray - lowest mood state */
+    width: 50%;
+    height: 50%;
+    position: relative;
+    top: 15%;     /* Further offset to show additional depth */
+    z-index: 2;   /* Appears above both parent and grandparent */
+    text-align: inherit;
+}
+
+/* Bottom-right quadrant: Low Energy + Pleasant */
+/* "We vibing" - Calm contentment and relaxation */
+#bottom-right {
+    background-color: #A6A98E; /* Soft olive-green - calm, pleasant */
+    width: 50%;
+    height: 100%;
+    text-align: center;
+}
+
+/* ==================== FOOTER SECTION ==================== */
+
+/* Bottom footer section containing the valence scale indicator */
+#bot {
+    background-color: red;
+    width: 100vw;
+    height: 30vh; /* 30% of viewport height */
+}

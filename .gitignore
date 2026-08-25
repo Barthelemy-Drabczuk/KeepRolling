@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments / package managers
+.venv/
+backend/app/.venv/
+.pixi/
+
+# Secrets
+.env
+backend/app/.env
+
+# Tooling caches / local state
+.ruff_cache/
+.pytest_cache/
+.omc/
+
+# OS
+.DS_Store

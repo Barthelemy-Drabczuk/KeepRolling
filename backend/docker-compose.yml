@@ -1,0 +1,86 @@
+# Moodometer Docker Compose Configuration
+#
+# This file orchestrates the multi-container setup for the Moodometer application,
+# consisting of two services:
+# 1. web: The FastAPI application container
+# 2. db: The PostgreSQL database container
+#
+# The web service depends on the database being healthy before starting,
+# ensuring proper initialization order and preventing connection errors.
+
+services:
+  # ==================== WEB SERVICE (FastAPI Application) ====================
+  web:
+    # Build the web container from the Dockerfile in the current directory
+    build: .
+    
+    # Port mapping: host:container
+    # Maps port 8000 on the host machine to port 8000 in the container
+    # Access the application at http://localhost:8000
+    ports:
+      - "8000:8000"
+    
+    # Environment variables for the web service
+    environment:
+      - DATABASE_URL=postgresql://moodometer:moodometer_pass@db:5432/moodometer
+      - SECRET_KEY=your-secret-key-change-in-production
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+    
+    # Service dependency configuration
+    # The web service will wait for the database to be healthy before starting
+    depends_on:
+      db:
+       # Only start web service after db passes its health check
+       # This prevents connection errors during startup
+       condition: service_healthy
+    
+    # Mount the alembic directory for migrations
+    volumes:
+      - ./alembic:/usr/src/app/alembic
+      - ./alembic.ini:/usr/src/app/alembic.ini
+
+  # ==================== DATABASE SERVICE (PostgreSQL) ====================
+  db:
+    # Use the official PostgreSQL image from Docker Hub
+    # Version 16 for stability
+    image: postgres:16
+    
+    # Restart policy: always restart the container if it stops
+    # Ensures database availability even after crashes or system reboots
+    restart: always
+    
+    # Environment variables for PostgreSQL
+    environment:
+      - POSTGRES_USER=moodometer
+      - POSTGRES_PASSWORD=moodometer_pass
+      - POSTGRES_DB=moodometer
+    
+    # Persist database data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    
+    # Expose port for debugging (optional)
+    ports:
+      - "5432:5432"
+    
+    # Health check configuration to determine when the database is ready
+    healthcheck:
+      # Command to check if PostgreSQL is accepting connections
+      # pg_isready is a PostgreSQL utility that checks server availability
+      test: ["CMD-SHELL", "pg_isready -U moodometer"]
+      
+      # Check every 1 second (frequent checks for faster startup)
+      interval: 1s
+      
+      # Wait up to 5 seconds for each health check to complete
+      timeout: 5s
+      
+      # Retry up to 10 times before marking the service as unhealthy
+      # Total maximum wait time: 10 seconds
+      retries: 10
+
+# Named volumes for data persistence
+volumes:
+  postgres_data:
+

@@ -1,0 +1,205 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+Moodometer: a FastAPI + PostgreSQL mood-tracking app built on the circumplex
+model of affect (energy × valence). Users log moods on a 2D grid and add
+journal entries; the API also computes statistics/patterns/insights and
+exports data as CSV/JSON/PDF.
+
+## Commands
+
+The project is managed with **pixi** (`pyproject.toml` → `[tool.pixi.tasks]`).
+Linting/formatting (`ruff`) live in the `dev` feature/environment, so use
+`pixi run -e dev ...` for those two, and plain `pixi run ...` for the rest:
+
+```bash
+pixi run test                   # pytest — NOTE: no test files exist yet in the repo
+pixi run -e dev lint            # ruff check .
+pixi run -e dev format-check    # ruff format --check .
+pixi run -e dev format          # ruff format . (auto-fixes formatting)
+pixi run db-test                # sanity-check the DB connection (backend/db.py)
+pixi run db-migrate             # alembic upgrade head
+pixi run db-revision -m "message"   # alembic revision --autogenerate
+```
+
+**Running the dev server — do not use `pixi run dev` as-is.** That task runs
+`uvicorn backend.app.app:app` from the repo root, but every module in
+`backend/app/` uses bare imports (`from database import get_db`, `from models
+import ...`), and `app.mount("/static", StaticFiles(directory="static"))`
+uses a relative path too. Both only resolve if `backend/app/` itself is the
+process's working directory / on `sys.path`. This has been verified: running
+from repo root fails with `ModuleNotFoundError: No module named 'database'`.
+Instead:
+
+```bash
+cd backend/app
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+A single test module/function, once tests exist, would be run the normal
+pytest way (`pytest path/to/test_file.py::test_name`) from `backend/app/`
+for the same import-path reason.
+
+### Docker
+
+```bash
+cd backend
+docker-compose up --build
+```
+
+Runs the `web` (FastAPI, port 8000) and `db` (Postgres 16, port 5432)
+services; `web` waits for `db`'s healthcheck. `docker-compose.yml` also
+bind-mounts `./alembic` and `./alembic.ini` into the container.
+
+### Environment
+
+`backend/app/.env` (gitignored) must define `DATABASE_URL`; `database.py`
+raises at import time if it's unset. `auth.py` reads `SECRET_KEY` (defaults
+to an insecure placeholder if unset — always set it), `ALGORITHM`
+(`HS256`), and hardcodes `ACCESS_TOKEN_EXPIRE_MINUTES = 30`.
+
+## Coding style
+
+Follow PEP 8. `ruff` (configured in `pyproject.toml`'s `[tool.ruff]`,
+`E`/`F`/`W`/`I` rules) is the enforcement mechanism — run
+`pixi run -e dev lint` and `pixi run -e dev format-check` before treating
+work as done; `pixi run -e dev format` auto-fixes formatting. The existing
+codebase is not yet clean (mostly trailing whitespace and import
+ordering — `pixi run -e dev lint` currently reports ~340 issues, largely
+in `backend/db.py` and files ruff hasn't touched yet); don't take existing
+code as a style example, and don't take on a repo-wide reformat as a side
+effect of an unrelated change — fix style in files you're already editing
+for another reason. `app_new.py` is excluded from ruff (see "dead code"
+below) so it doesn't count toward this.
+
+Beyond PEP 8 itself: this codebase consistently uses type hints on
+function signatures (see `auth.py`, `analytics.py`) — match that in new
+code — and Pydantic v2 style (`ConfigDict`, `Field(...)`) rather than v1
+(`class Config`, `Field(...)` with a `Config` inner class).
+
+## Requirements
+
+Project requirements live in `BUSINESS.md`, one `REQ-<AREA>-<N>` per
+testable statement. Before turning a requirement into tests (the
+`requirement-specialist` subagent's job), it must be well-formed per
+INCOSE: necessary, appropriate, unambiguous, complete, singular,
+feasible, verifiable, correct, conforming. Concretely: one testable
+statement per requirement (no "and"/"or" joining distinct behaviors), no
+vague/subjective qualifier ("fast", "user-friendly", "robust") without a
+measurable definition, no open TBD, and no requirement that can
+reasonably be read two different ways. A requirement that fails one of
+these gets sent back for disambiguation rather than guessed at — see
+`BUSINESS.md`'s "Open questions" section for requirements currently
+blocked on exactly this.
+
+## Dependency changes
+
+Before adding a dependency to `pyproject.toml`, bumping one, or writing
+code against a dependency API not already verified earlier in the same
+session, confirm the current API shape via the `context7` MCP tools
+instead of assuming from memory — see the
+`checking-dependencies-with-context7` skill. This matters most for
+SQLAlchemy (1.x vs. 2.0 query style) and Pydantic (v1 vs. v2 validator/
+config style), where both major versions are common in training data and
+using the wrong one won't always fail loudly.
+
+## Commit conventions
+
+Imperative mood, describes the one change accurately. No
+"Co-Authored-By" line, no "Generated with Claude Code" line, and no other
+Anthropic/Claude.ai attribution anywhere in the message — non-negotiable.
+One logical change per commit; split up anything mixed rather than
+bundling it.
+
+## Architecture
+
+### Runtime app vs. dead code — read this before editing
+
+- **`backend/app/app.py`** is the actual application (mounted by the
+  Dockerfile's `CMD` and the README's run instructions) — FastAPI routes for
+  auth, users, moods, entries, analytics, and export.
+- **`backend/app/app_new.py`** and **`backend/app/index_new.html`** are
+  earlier/orphaned variants of `app.py`/`index.html` (missing the export
+  endpoints and the Chart.js visualization panel, respectively). Nothing
+  imports or references them — they aren't wired into the Dockerfile,
+  docker-compose, or any entrypoint. Treat them as dead unless told
+  otherwise; don't assume changes to `app.py` need mirroring there.
+- **`backend/app/User.py`** is a standalone in-memory `User` class
+  (plaintext password, dict-based mood/entry storage) that nothing else in
+  the codebase imports. It predates the SQLAlchemy models and is not part of
+  the request path — don't confuse it with `models.UserModel`.
+
+### Request flow (the real path)
+
+`app.py` wires together four modules, each with a single responsibility:
+
+- **`database.py`** — SQLAlchemy engine/session setup from `DATABASE_URL`,
+  plus the `get_db()` FastAPI dependency and `init_db()` (called on the
+  `startup` event to create tables — there's no separate seed/init script;
+  schema also evolves via Alembic migrations in `backend/alembic/versions/`,
+  currently empty).
+- **`models.py`** — the three tables: `UserModel` 1—N `MoodModel` and 1—N
+  `EntryModel` (both `cascade="all, delete-orphan"`). `MoodModel.energy` and
+  `.valence` are floats constrained to **-1.0..1.0** (low↔high energy,
+  unpleasant↔pleasant valence) — this is the actual constraint, independent
+  of the README's mention of the six-zone circumplex labels.
+- **`schemas.py`** — Pydantic request/response models, enforcing the same
+  -1.0..1.0 range plus field-length limits (username 3-50 chars, password
+  min 8 chars, journal content 1-5000 chars).
+- **`auth.py`** — bcrypt password hashing (72-byte truncation) and JWT
+  issuance/validation. `get_current_active_user` is the dependency every
+  protected route uses; `app.py` additionally re-checks
+  `current_user.username == username` on every per-user route, since JWT
+  auth alone doesn't scope access to the path's `{username}`.
+- **`analytics.py`** — pure query/stat functions (`calculate_mood_statistics`,
+  `detect_mood_patterns`, `generate_insights`, quadrant distribution) called
+  lazily inside the analytics/export endpoints of `app.py` rather than
+  imported at module load time.
+
+Every mutating endpoint in `app.py` follows the same shape: authenticate →
+confirm `current_user.username == {username}` (403 if not) → look up the
+user (404 if missing) → look up the child resource by id scoped to that user
+(404 if missing) → mutate. When adding endpoints, match this order so
+authorization checks stay ahead of existence checks.
+
+### Frontend
+
+`index.html` + `static/app.js` + `static/style.css` is a vanilla-JS SPA
+served directly by FastAPI (`GET /` returns `index.html`; `/static` is
+mounted from `backend/app/static/`). `app.js` calls the API via
+`API_BASE = window.location.origin`, consistently — routes have no `/api`
+prefix (they're mounted directly at `/users/{username}/...`), so keep new
+frontend calls consistent with that rather than assuming a REST-style
+`/api` namespace.
+
+### Subagents and skills (`.claude/agents/`, `.claude/skills/`)
+
+Three subagents (`requirement-specialist`, `qc-specialist`,
+`commit-reviewer`, described in `AGENTS.md`) implement a red-green-refactor
+gate before commits: turn a `BUSINESS.md` requirement into a failing
+pytest test (per the "Requirements" section above) → implement → verify
+with `pytest` (from `backend/app/`, per the cwd note above) and `ruff
+check`/`ruff format --check` (from the repo root, where `pyproject.toml`'s
+`[tool.ruff]` config lives) → review the staged diff → commit. Their
+supporting skills live in `.claude/skills/` (indexed in
+`.claude/SKILLS.md`): `running-pytest-tests` (pytest invocations and how
+to tell a real red state from a broken one), `checking-dependencies-with-
+context7` (look up current dependency API shape — see "Dependency
+changes" above), and `reviewing-atomic-commits` (read-only `git`/`gh`
+inspection for the commit gate). None of `pytest`, `ruff`, `git`, or `gh`
+is currently allow-listed anywhere in this repo, so expect a permission
+prompt on each of these commands rather than assuming they run silently.
+
+# Commit conventions
+
+- Atomic commits: one logical change per commit, imperative-mood subject
+  line, no mixed-concern commits.
+- Never add a "Co-Authored-By" line, a "Generated with Claude Code" line,
+  or any other Anthropic/Claude.ai attribution to a commit message, PR
+  description, or other git metadata.
+- This is a CLAUDE.md instruction, which is context rather than hard
+  enforcement — for a guarantee, also clear `attribution` in
+  `.claude/settings.json` as a belt-and-suspenders measure.
