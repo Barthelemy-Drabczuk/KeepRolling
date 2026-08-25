@@ -69,6 +69,10 @@ under "Open Questions" rather than guessed into a REQ.
   `/users/{username}/moods/{mood_id}` shall return 404 when no mood with
   that id exists for that user — whether the id doesn't exist at all, or
   belongs to a different user.
+- **REQ-MOOD-5**: A mood entry shall accept an optional `notes` field of
+  up to 1000 characters, persisted and returned unchanged on creation and
+  update. (Not yet implemented — closing this gap is what resolves
+  KD-1's `mood.notes` reference for export; see Known Defects.)
 
 ## Journal Entries
 

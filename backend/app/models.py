@@ -43,23 +43,25 @@ class UserModel(Base):
 class MoodModel(Base):
     """
     Mood table for storing emotional state entries.
-    
+
     Attributes:
         id: Primary key
         user_id: Foreign key to users table
         timestamp: When the mood was recorded
         energy: Energy level (-1.0 to 1.0, high to low)
         valence: Emotional valence (-1.0 to 1.0, pleasant to unpleasant)
+        notes: Optional free-text note attached to this mood
         user: Relationship to user
     """
     __tablename__ = "moods"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     energy = Column(Float, nullable=False)  # -1.0 (low) to 1.0 (high)
     valence = Column(Float, nullable=False)  # -1.0 (unpleasant) to 1.0 (pleasant)
-    
+    notes = Column(String, nullable=True)
+
     # Relationship
     user = relationship("UserModel", back_populates="moods")
 

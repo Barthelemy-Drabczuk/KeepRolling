@@ -284,6 +284,7 @@ def create_mood(
         user_id=user.id,
         energy=mood.energy,
         valence=mood.valence,
+        notes=mood.notes,
         timestamp=mood.timestamp or datetime.utcnow()
     )
     
@@ -417,7 +418,8 @@ def update_mood(
     
     mood.energy = mood_update.energy
     mood.valence = mood_update.valence
-    
+    mood.notes = mood_update.notes
+
     db.commit()
     db.refresh(mood)
     

@@ -1,7 +1,9 @@
-"""Tests for REQ-MOOD-1..4 (see BUSINESS.md).
+"""Tests for REQ-MOOD-1..5 (see BUSINESS.md).
 
-All of these are characterization tests: the behavior they pin down is
-already implemented by the mood endpoints in ``app.py``.
+REQ-MOOD-1..4 are characterization tests: the behavior they pin down is
+already implemented by the mood endpoints in ``app.py``. REQ-MOOD-5 (the
+optional ``notes`` field) is not implemented yet, so that section is red by
+design and drives the implementation.
 
 A note on REQ-MOOD-4's "belongs to a different user" clause. Every mood
 route authorizes before it looks anything up, so the status code depends on
@@ -51,11 +53,13 @@ def _count_moods(username):
         db.close()
 
 
-def _create_mood(client, headers, username, energy=0.5, valence=0.5, timestamp=None):
+def _create_mood(client, headers, username, energy=0.5, valence=0.5, timestamp=None, notes=None):
     """POST a mood and return the created body, asserting it succeeded."""
     payload = {"energy": energy, "valence": valence}
     if timestamp is not None:
         payload["timestamp"] = timestamp
+    if notes is not None:
+        payload["notes"] = notes
     response = client.post(f"/users/{username}/moods", json=payload, headers=headers)
     assert response.status_code == 201, response.text
     return response.json()
@@ -443,3 +447,168 @@ def test_owner_can_still_get_their_own_mood_by_id(client, auth_headers):
 
     assert response.status_code == 200, response.text
     assert response.json()["id"] == created["id"]
+
+
+# ==================== REQ-MOOD-5 ====================
+#
+# Unlike everything above, these are *not* characterization tests: `notes` does
+# not exist yet on MoodModel, the Mood schemas, or the create/update endpoints.
+# They are expected to fail until it does.
+
+
+def test_create_mood_returns_the_notes_it_was_given(client, auth_headers):
+    """REQ-MOOD-5: a notes string supplied on create comes back unchanged."""
+    headers = auth_headers("alice")
+
+    response = client.post(
+        "/users/alice/moods",
+        json={"energy": 0.1, "valence": 0.2, "notes": "Slept badly, coffee helped."},
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["notes"] == "Slept badly, coffee helped."
+
+
+def test_created_notes_are_persisted(client, auth_headers):
+    """REQ-MOOD-5: the notes supplied on create land in the database row."""
+    headers = auth_headers("alice")
+
+    body = _create_mood(client, headers, "alice", notes="Walked by the river.")
+
+    assert _fetch_mood(body["id"]).notes == "Walked by the river."
+
+
+def test_create_mood_without_notes_is_accepted(client, auth_headers):
+    """REQ-MOOD-5: notes is optional — omitting it still creates the mood."""
+    headers = auth_headers("alice")
+
+    response = client.post(
+        "/users/alice/moods", json={"energy": 0.1, "valence": 0.2}, headers=headers
+    )
+
+    assert response.status_code == 201, response.text
+
+
+def test_mood_created_without_notes_has_null_notes(client, auth_headers):
+    """REQ-MOOD-5: an omitted notes field reads back as null, not an empty string."""
+    headers = auth_headers("alice")
+
+    body = _create_mood(client, headers, "alice")
+
+    assert body["notes"] is None
+
+
+def test_update_mood_can_set_notes_on_a_mood_created_without_them(client, auth_headers):
+    """REQ-MOOD-5: PUT can add notes to a mood that had none."""
+    headers = auth_headers("alice")
+    created = _create_mood(client, headers, "alice")
+
+    response = client.put(
+        f"/users/alice/moods/{created['id']}",
+        json={"energy": 0.1, "valence": 0.2, "notes": "Added later."},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["notes"] == "Added later."
+
+
+def test_update_mood_can_change_existing_notes(client, auth_headers):
+    """REQ-MOOD-5: PUT replaces previously stored notes with the new value."""
+    headers = auth_headers("alice")
+    created = _create_mood(client, headers, "alice", notes="First take.")
+
+    response = client.put(
+        f"/users/alice/moods/{created['id']}",
+        json={"energy": 0.1, "valence": 0.2, "notes": "Second take."},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["notes"] == "Second take."
+
+
+def test_updated_notes_are_persisted(client, auth_headers):
+    """REQ-MOOD-5: the notes supplied on update land in the database row."""
+    headers = auth_headers("alice")
+    created = _create_mood(client, headers, "alice", notes="First take.")
+
+    client.put(
+        f"/users/alice/moods/{created['id']}",
+        json={"energy": 0.1, "valence": 0.2, "notes": "Second take."},
+        headers=headers,
+    )
+
+    assert _fetch_mood(created["id"]).notes == "Second take."
+
+
+def test_create_mood_accepts_notes_of_exactly_1000_characters(client, auth_headers):
+    """REQ-MOOD-5: "up to 1000 characters" includes the 1000-character case."""
+    headers = auth_headers("alice")
+    notes = "n" * 1000
+
+    response = client.post(
+        "/users/alice/moods",
+        json={"energy": 0.1, "valence": 0.2, "notes": notes},
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["notes"] == notes
+
+
+def test_create_mood_rejects_notes_longer_than_1000_characters(client, auth_headers):
+    """REQ-MOOD-5: 1001 characters is over the bound and is rejected with 422."""
+    headers = auth_headers("alice")
+
+    response = client.post(
+        "/users/alice/moods",
+        json={"energy": 0.1, "valence": 0.2, "notes": "n" * 1001},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
+
+
+def test_over_length_notes_are_not_persisted(client, auth_headers):
+    """REQ-MOOD-5: a create rejected for over-long notes writes no mood row."""
+    headers = auth_headers("alice")
+
+    client.post(
+        "/users/alice/moods",
+        json={"energy": 0.1, "valence": 0.2, "notes": "n" * 1001},
+        headers=headers,
+    )
+
+    assert _count_moods("alice") == 0
+
+
+def test_update_mood_accepts_notes_of_exactly_1000_characters(client, auth_headers):
+    """REQ-MOOD-5: the 1000-character bound is closed on update too."""
+    headers = auth_headers("alice")
+    created = _create_mood(client, headers, "alice")
+    notes = "n" * 1000
+
+    response = client.put(
+        f"/users/alice/moods/{created['id']}",
+        json={"energy": 0.1, "valence": 0.2, "notes": notes},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["notes"] == notes
+
+
+def test_update_mood_rejects_notes_longer_than_1000_characters(client, auth_headers):
+    """REQ-MOOD-5: an over-long notes value on update is rejected with 422."""
+    headers = auth_headers("alice")
+    created = _create_mood(client, headers, "alice")
+
+    response = client.put(
+        f"/users/alice/moods/{created['id']}",
+        json={"energy": 0.1, "valence": 0.2, "notes": "n" * 1001},
+        headers=headers,
+    )
+
+    assert response.status_code == 422

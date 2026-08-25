@@ -42,6 +42,7 @@ class MoodBase(BaseModel):
     """Base schema for mood data"""
     energy: float = Field(..., ge=-1.0, le=1.0, description="Energy level from -1 (low) to 1 (high)")
     valence: float = Field(..., ge=-1.0, le=1.0, description="Valence from -1 (unpleasant) to 1 (pleasant)")
+    notes: Optional[str] = Field(None, max_length=1000, description="Optional note attached to this mood")
 
 
 class MoodCreate(MoodBase):
