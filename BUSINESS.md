@@ -121,16 +121,22 @@ under "Open Questions" rather than guessed into a REQ.
 
 - **REQ-EXPORT-1**: `GET /users/{username}/export/csv` shall return the
   authenticated caller's own moods (403 otherwise) as a downloadable CSV
-  attachment, one row per mood, containing the fields that exist on a
-  mood entry: timestamp, energy, and valence. (See Known Defects: KD-1 —
-  the current implementation does not conform.)
+  attachment, one row per mood, with columns Timestamp, Mood (the
+  quadrant label derived from energy/valence, e.g. `high_energy_pleasant`
+  — not a stored value), Energy, Valence, and Notes.
 - **REQ-EXPORT-2**: `GET /users/{username}/export/json` shall return the
-  authenticated caller's own moods, and optionally entries
-  (`include_entries=true`), as a downloadable JSON attachment, filterable
-  by `start_date`/`end_date`. (See KD-1.)
+  authenticated caller's own moods (timestamp, derived quadrant-label
+  `mood`, energy, valence, notes) as a downloadable JSON attachment,
+  optionally including entries (`include_entries=true`; each entry's
+  timestamp, content, and `mood` — the quadrant label of the entry's
+  linked mood if it has one via `mood_id`, else `null`), filterable by
+  `start_date`/`end_date`.
 - **REQ-EXPORT-3**: `GET /users/{username}/export/pdf` shall return a PDF
-  report containing the caller's mood statistics and their most recent
-  mood history. (See KD-1.)
+  report containing the caller's mood statistics (respecting the same
+  `start_date`/`end_date` filter as the history table below it, not the
+  caller's entire history regardless of filter) and a table of their most
+  recent mood history with the same derived quadrant-label `Mood` column
+  as REQ-EXPORT-1.
 - **REQ-EXPORT-4**: All three export endpoints shall accept optional
   `start_date`/`end_date` query parameters in `YYYY-MM-DD` format and
   return 400 for a value that fails to parse as that format.
@@ -140,18 +146,20 @@ under "Open Questions" rather than guessed into a REQ.
 Not new requirements — tracked non-conformance against the requirements
 above, so the red-green loop has a concrete target.
 
-- **KD-1**: `export_moods_csv`, `export_moods_json`, and
-  `export_moods_pdf` in `app.py` read `mood.mood` off `MoodModel`, and
-  `entry.mood` off `EntryModel`. Neither model defines those attributes.
-  `mood.notes` is no longer part of this defect — `MoodModel` gained a
-  real `notes` column (REQ-MOOD-5) — but `mood.mood` (a quadrant label)
-  and `entry.mood` (which needs an entry-to-mood link that doesn't exist
-  yet — see REQ-ENTRY-5/6) still don't exist on the models. Exporting any
-  non-empty mood or entry list still raises `AttributeError` at request
-  time. REQ-EXPORT-1/2/3 describe the corrected behavior: `mood.mood`
-  should be the quadrant label derived from energy/valence (not a stored
-  column), and `entry.mood` should come from the entry's linked mood, if
-  any.
+- ~~**KD-1**~~ — resolved: `export_moods_csv`/`export_moods_json`/
+  `export_moods_pdf` in `app.py` now derive the `Mood`/`mood` field via
+  `analytics.get_mood_quadrant_name(energy, valence)` instead of reading
+  a nonexistent `mood.mood` attribute, and entry export reads the linked
+  mood (`entry.mood`, via `mood_id`) instead of a nonexistent `entry.mood`
+  string attribute.
+- ~~**KD-2**~~ — resolved (found while fixing KD-1, in the same change):
+  `export_moods_pdf` called `calculate_mood_statistics(db, user.id,
+  days=None)` — `calculate_mood_statistics` (`analytics.py`) has no
+  `days` parameter (only `start_date`/`end_date`), so this call raised
+  `TypeError` on every PDF export, including with zero moods, independent
+  of KD-1. Now calls with `start_date`/`end_date` derived from the
+  endpoint's own query parameters, matching the same filter already
+  applied to the history table below it.
 
 ## Open Questions
 

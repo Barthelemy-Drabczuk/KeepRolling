@@ -848,22 +848,23 @@ async def export_moods_csv(
     import csv
     import io
     from fastapi.responses import StreamingResponse
-    
+    from analytics import get_mood_quadrant_name
+
     # Users can only export their own data
     if current_user.username != username:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to export this user's data"
         )
-    
+
     user = db.query(UserModel).filter(UserModel.username == username).first()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User {username} does not exist"
         )
-    
+
     # Build query
     query = db.query(MoodModel).filter(MoodModel.user_id == user.id)
     
@@ -900,7 +901,7 @@ async def export_moods_csv(
     for mood in moods:
         writer.writerow([
             mood.timestamp.isoformat(),
-            mood.mood,
+            get_mood_quadrant_name(mood.energy, mood.valence),
             mood.energy,
             mood.valence,
             mood.notes or ''
@@ -936,7 +937,8 @@ async def export_moods_json(
     """
     import json
     from fastapi.responses import StreamingResponse
-    
+    from analytics import get_mood_quadrant_name
+
     # Users can only export their own data
     if current_user.username != username:
         raise HTTPException(
@@ -988,7 +990,7 @@ async def export_moods_json(
         "moods": [
             {
                 "timestamp": mood.timestamp.isoformat(),
-                "mood": mood.mood,
+                "mood": get_mood_quadrant_name(mood.energy, mood.valence),
                 "energy": mood.energy,
                 "valence": mood.valence,
                 "notes": mood.notes
@@ -1012,7 +1014,10 @@ async def export_moods_json(
             {
                 "timestamp": entry.timestamp.isoformat(),
                 "content": entry.content,
-                "mood": entry.mood
+                "mood": (
+                    get_mood_quadrant_name(entry.mood.energy, entry.mood.valence)
+                    if entry.mood else None
+                )
             }
             for entry in entries
         ]
@@ -1092,8 +1097,12 @@ async def export_moods_pdf(
     moods = query.order_by(MoodModel.timestamp).all()
     
     # Calculate statistics
-    from analytics import calculate_mood_statistics
-    stats = calculate_mood_statistics(db, user.id, days=None)
+    from analytics import calculate_mood_statistics, get_mood_quadrant_name
+    stats = calculate_mood_statistics(
+        db, user.id,
+        start_dt if start_date else None,
+        end_dt if end_date else None
+    )
     
     # Create PDF in memory
     buffer = io.BytesIO()
@@ -1154,7 +1163,7 @@ async def export_moods_pdf(
         for mood in moods[-20:]:  # Last 20 entries
             mood_data.append([
                 mood.timestamp.strftime('%Y-%m-%d %H:%M'),
-                mood.mood,
+                get_mood_quadrant_name(mood.energy, mood.valence),
                 f"{mood.energy:.1f}",
                 f"{mood.valence:.1f}"
             ])
