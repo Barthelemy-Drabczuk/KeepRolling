@@ -71,8 +71,7 @@ under "Open Questions" rather than guessed into a REQ.
   belongs to a different user.
 - **REQ-MOOD-5**: A mood entry shall accept an optional `notes` field of
   up to 1000 characters, persisted and returned unchanged on creation and
-  update. (Not yet implemented — closing this gap is what resolves
-  KD-1's `mood.notes` reference for export; see Known Defects.)
+  update.
 
 ## Journal Entries
 
@@ -134,13 +133,17 @@ Not new requirements — tracked non-conformance against the requirements
 above, so the red-green loop has a concrete target.
 
 - **KD-1**: `export_moods_csv`, `export_moods_json`, and
-  `export_moods_pdf` in `app.py` read `mood.mood` and `mood.notes` off
-  `MoodModel`, and `entry.mood` off `EntryModel`. Neither model defines
-  those columns — `MoodModel` (`models.py`) has only `energy`, `valence`,
-  and `timestamp`; `EntryModel` has only `content` and `timestamp`.
-  Exporting any non-empty mood or entry list will raise `AttributeError`
-  at request time. REQ-EXPORT-1/2/3 describe the corrected behavior
-  (export only fields that actually exist on the model).
+  `export_moods_pdf` in `app.py` read `mood.mood` off `MoodModel`, and
+  `entry.mood` off `EntryModel`. Neither model defines those attributes.
+  `mood.notes` is no longer part of this defect — `MoodModel` gained a
+  real `notes` column (REQ-MOOD-5) — but `mood.mood` (a quadrant label)
+  and `entry.mood` (which needs an entry-to-mood link that doesn't exist
+  yet — see REQ-ENTRY-5/6) still don't exist on the models. Exporting any
+  non-empty mood or entry list still raises `AttributeError` at request
+  time. REQ-EXPORT-1/2/3 describe the corrected behavior: `mood.mood`
+  should be the quadrant label derived from energy/valence (not a stored
+  column), and `entry.mood` should come from the entry's linked mood, if
+  any.
 
 ## Open Questions
 
