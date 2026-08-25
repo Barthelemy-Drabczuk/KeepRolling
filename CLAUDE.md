@@ -16,7 +16,7 @@ Linting/formatting (`ruff`) live in the `dev` feature/environment, so use
 `pixi run -e dev ...` for those two, and plain `pixi run ...` for the rest:
 
 ```bash
-pixi run test                   # pytest — NOTE: no test files exist yet in the repo
+pixi run -e test test           # pytest (needs -e test: pytest lives in the test feature, not default)
 pixi run -e dev lint            # ruff check .
 pixi run -e dev format-check    # ruff format --check .
 pixi run -e dev format          # ruff format . (auto-fixes formatting)
@@ -39,9 +39,14 @@ cd backend/app
 uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-A single test module/function, once tests exist, would be run the normal
-pytest way (`pytest path/to/test_file.py::test_name`) from `backend/app/`
-for the same import-path reason.
+Tests live in `backend/app/tests/`; `backend/app/pytest.ini` sets
+`pythonpath = .` so `pytest`, run from `backend/app/`, can import the
+application modules the same way `uvicorn` does. Run a single file or test
+the normal pytest way: `pixi run -e test pytest tests/test_auth.py` or
+`pixi run -e test pytest tests/test_auth.py::test_login_succeeds`.
+`tests/conftest.py` overrides the `get_db` dependency with an isolated
+in-memory SQLite database per test (via the `client` fixture) and no-ops
+`init_db`, so the suite never touches the real `DATABASE_URL`.
 
 ### Docker
 
