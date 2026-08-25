@@ -69,22 +69,26 @@ class MoodModel(Base):
 class EntryModel(Base):
     """
     Entry table for storing journal entries.
-    
+
     Attributes:
         id: Primary key
         user_id: Foreign key to users table
         timestamp: When the entry was created
         content: Text content of the journal entry
+        mood_id: Optional foreign key to the mood this entry relates to
         user: Relationship to user
+        mood: Relationship to the linked mood, if any
     """
     __tablename__ = "entries"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     content = Column(String, nullable=False)
-    
-    # Relationship
+    mood_id = Column(Integer, ForeignKey("moods.id"), nullable=True)
+
+    # Relationships
     user = relationship("UserModel", back_populates="entries")
+    mood = relationship("MoodModel")
 
 # Made with Bob

@@ -464,10 +464,11 @@ def delete_mood(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mood entry not found"
         )
-    
+
+    db.query(EntryModel).filter(EntryModel.mood_id == mood.id).update({"mood_id": None})
     db.delete(mood)
     db.commit()
-    
+
     return None
 
 
@@ -502,12 +503,25 @@ def create_entry(
             detail=f"User {username} does not exist"
         )
     
+    if entry.mood_id is not None:
+        mood = db.query(MoodModel).filter(
+            MoodModel.id == entry.mood_id,
+            MoodModel.user_id == user.id
+        ).first()
+
+        if not mood:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Mood entry not found"
+            )
+
     db_entry = EntryModel(
         user_id=user.id,
         content=entry.content,
+        mood_id=entry.mood_id,
         timestamp=entry.timestamp or datetime.utcnow()
     )
-    
+
     db.add(db_entry)
     db.commit()
     db.refresh(db_entry)
@@ -635,11 +649,24 @@ def update_entry(
             detail="Entry not found"
         )
     
+    if entry_update.mood_id is not None:
+        mood = db.query(MoodModel).filter(
+            MoodModel.id == entry_update.mood_id,
+            MoodModel.user_id == user.id
+        ).first()
+
+        if not mood:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Mood entry not found"
+            )
+
     entry.content = entry_update.content
-    
+    entry.mood_id = entry_update.mood_id
+
     db.commit()
     db.refresh(entry)
-    
+
     return entry
 
 

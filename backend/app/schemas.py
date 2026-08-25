@@ -69,6 +69,7 @@ class MoodResponse(MoodBase):
 class EntryBase(BaseModel):
     """Base schema for journal entry data"""
     content: str = Field(..., min_length=1, max_length=5000, description="Journal entry text")
+    mood_id: Optional[int] = Field(None, description="Optional id of a mood this entry relates to")
 
 
 class EntryCreate(EntryBase):

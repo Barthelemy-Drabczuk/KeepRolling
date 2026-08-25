@@ -1,11 +1,13 @@
-"""Tests for REQ-ENTRY-1..4 (see BUSINESS.md).
+"""Tests for REQ-ENTRY-1..6 (see BUSINESS.md).
 
-All of these are characterization tests: the behavior they pin down is
+REQ-ENTRY-1..4 are characterization tests: the behavior they pin down is
 already implemented by the journal-entry endpoints in ``app.py``, so they are
-expected to pass as written. REQ-ENTRY-5 (the optional ``mood_id`` link) and
-REQ-ENTRY-6 (unlinking on mood deletion) are marked "not yet implemented" in
-BUSINESS.md and are deliberately *not* covered here — they are separate
-follow-up work.
+expected to pass as written.
+
+REQ-ENTRY-5 (the optional ``mood_id`` link) and REQ-ENTRY-6 (unlinking on
+mood deletion) are marked "not yet implemented" in BUSINESS.md — the tests in
+those two sections are the *red* half of red-green and are expected to fail
+until ``EntryModel``/``schemas.py``/``app.py`` grow the link.
 
 A note on REQ-ENTRY-4's "for that user" clause, mirroring the same
 distinction already pinned in ``test_moods.py``. Every entry route authorizes
@@ -26,7 +28,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import TestingSessionLocal
-from models import EntryModel, UserModel
+from models import EntryModel, MoodModel, UserModel
 
 
 def _fetch_user(username):
@@ -56,12 +58,36 @@ def _count_entries(username):
         db.close()
 
 
-def _create_entry(client, headers, username, content="A day like any other.", timestamp=None):
+def _fetch_mood(mood_id):
+    """Read a mood row straight from the database, bypassing the API."""
+    db = TestingSessionLocal()
+    try:
+        return db.query(MoodModel).filter(MoodModel.id == mood_id).first()
+    finally:
+        db.close()
+
+
+def _create_entry(
+    client, headers, username, content="A day like any other.", timestamp=None, mood_id=None
+):
     """POST an entry and return the created body, asserting it succeeded."""
     payload = {"content": content}
     if timestamp is not None:
         payload["timestamp"] = timestamp
+    if mood_id is not None:
+        payload["mood_id"] = mood_id
     response = client.post(f"/users/{username}/entries", json=payload, headers=headers)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _create_mood(client, headers, username, energy=0.5, valence=0.5):
+    """POST a mood and return the created body, asserting it succeeded."""
+    response = client.post(
+        f"/users/{username}/moods",
+        json={"energy": energy, "valence": valence},
+        headers=headers,
+    )
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -465,3 +491,312 @@ def test_owner_can_delete_their_own_entry(client, auth_headers):
 
     assert response.status_code == 204, response.text
     assert _fetch_entry(created["id"]) is None
+
+
+# ==================== REQ-ENTRY-5 ====================
+
+
+def test_create_entry_accepts_a_mood_id_owned_by_the_caller(client, auth_headers):
+    """REQ-ENTRY-5: an entry may be created linked to one of the caller's moods."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+
+    response = client.post(
+        "/users/alice/entries",
+        json={"content": "Felt bright today.", "mood_id": mood["id"]},
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["mood_id"] == mood["id"]
+
+
+def test_created_entrys_mood_id_is_persisted(client, auth_headers):
+    """REQ-ENTRY-5: the supplied mood_id lands on the stored entry row."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+
+    body = _create_entry(client, headers, "alice", mood_id=mood["id"])
+
+    assert _fetch_entry(body["id"]).mood_id == mood["id"]
+
+
+def test_create_entry_without_a_mood_id_succeeds(client, auth_headers):
+    """REQ-ENTRY-5: mood_id is optional — an entry without one is still created."""
+    headers = auth_headers("alice")
+
+    response = client.post(
+        "/users/alice/entries", json={"content": "No mood attached."}, headers=headers
+    )
+
+    assert response.status_code == 201, response.text
+
+
+def test_entry_created_without_a_mood_id_has_a_null_mood_id(client, auth_headers):
+    """REQ-ENTRY-5: an omitted mood_id comes back as null rather than absent."""
+    headers = auth_headers("alice")
+
+    body = _create_entry(client, headers, "alice")
+
+    assert body["mood_id"] is None
+
+
+def test_create_entry_with_an_unknown_mood_id_returns_404(client, auth_headers):
+    """REQ-ENTRY-5: a mood_id that exists for nobody is refused with 404."""
+    headers = auth_headers("alice")
+
+    response = client.post(
+        "/users/alice/entries",
+        json={"content": "Linked to nothing.", "mood_id": 9999},
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+
+
+def test_create_with_an_unknown_mood_id_stores_no_entry(client, auth_headers):
+    """REQ-ENTRY-5: the 404'd create writes no entry row."""
+    headers = auth_headers("alice")
+
+    client.post(
+        "/users/alice/entries",
+        json={"content": "Linked to nothing.", "mood_id": 9999},
+        headers=headers,
+    )
+
+    assert _count_entries("alice") == 0
+
+
+def test_create_entry_with_another_users_mood_id_returns_404(client, auth_headers):
+    """REQ-ENTRY-5: a mood owned by someone else does not exist for the caller -> 404."""
+    alice_headers = auth_headers("alice")
+    bob_headers = auth_headers("bob", "bobspassword123")
+    bob_mood = _create_mood(client, bob_headers, "bob")
+
+    response = client.post(
+        "/users/alice/entries",
+        json={"content": "Borrowing Bob's mood.", "mood_id": bob_mood["id"]},
+        headers=alice_headers,
+    )
+
+    assert response.status_code == 404
+
+
+def test_create_with_another_users_mood_id_stores_no_entry(client, auth_headers):
+    """REQ-ENTRY-5: the cross-user 404'd create writes no entry row."""
+    alice_headers = auth_headers("alice")
+    bob_headers = auth_headers("bob", "bobspassword123")
+    bob_mood = _create_mood(client, bob_headers, "bob")
+
+    client.post(
+        "/users/alice/entries",
+        json={"content": "Borrowing Bob's mood.", "mood_id": bob_mood["id"]},
+        headers=alice_headers,
+    )
+
+    assert _count_entries("alice") == 0
+
+
+def test_update_entry_can_set_a_mood_id_on_an_unlinked_entry(client, auth_headers):
+    """REQ-ENTRY-5: PUT can attach a mood to an entry that had none."""
+    headers = auth_headers("alice")
+    entry = _create_entry(client, headers, "alice")
+    mood = _create_mood(client, headers, "alice")
+
+    response = client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": entry["content"], "mood_id": mood["id"]},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["mood_id"] == mood["id"]
+
+
+def test_update_entry_can_change_the_mood_id_to_another_owned_mood(client, auth_headers):
+    """REQ-ENTRY-5: PUT can re-point an already-linked entry at a different own mood."""
+    headers = auth_headers("alice")
+    first_mood = _create_mood(client, headers, "alice", energy=0.5, valence=0.5)
+    second_mood = _create_mood(client, headers, "alice", energy=-0.5, valence=-0.5)
+    entry = _create_entry(client, headers, "alice", mood_id=first_mood["id"])
+
+    response = client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": entry["content"], "mood_id": second_mood["id"]},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["mood_id"] == second_mood["id"]
+
+
+def test_updated_mood_id_is_persisted(client, auth_headers):
+    """REQ-ENTRY-5: the mood_id set by PUT lands on the stored entry row."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    entry = _create_entry(client, headers, "alice")
+
+    client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": entry["content"], "mood_id": mood["id"]},
+        headers=headers,
+    )
+
+    assert _fetch_entry(entry["id"]).mood_id == mood["id"]
+
+
+def test_update_entry_with_an_unknown_mood_id_returns_404(client, auth_headers):
+    """REQ-ENTRY-5: PUT with a mood_id that exists for nobody is refused with 404."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    entry = _create_entry(client, headers, "alice", mood_id=mood["id"])
+
+    response = client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": entry["content"], "mood_id": 9999},
+        headers=headers,
+    )
+
+    assert response.status_code == 404
+
+
+def test_failed_update_to_an_unknown_mood_id_keeps_the_existing_link(client, auth_headers):
+    """REQ-ENTRY-5: the 404'd update leaves the entry's previous mood_id in place."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    entry = _create_entry(client, headers, "alice", mood_id=mood["id"])
+
+    client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": "Rewritten.", "mood_id": 9999},
+        headers=headers,
+    )
+
+    stored = _fetch_entry(entry["id"])
+    assert stored.mood_id == mood["id"]
+    assert stored.content == entry["content"]
+
+
+def test_update_entry_with_another_users_mood_id_returns_404(client, auth_headers):
+    """REQ-ENTRY-5: PUT cannot link an entry to a mood owned by another user."""
+    alice_headers = auth_headers("alice")
+    bob_headers = auth_headers("bob", "bobspassword123")
+    bob_mood = _create_mood(client, bob_headers, "bob")
+    alice_mood = _create_mood(client, alice_headers, "alice")
+    entry = _create_entry(client, alice_headers, "alice", mood_id=alice_mood["id"])
+
+    response = client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": entry["content"], "mood_id": bob_mood["id"]},
+        headers=alice_headers,
+    )
+
+    assert response.status_code == 404
+
+
+def test_failed_update_to_another_users_mood_id_keeps_the_existing_link(client, auth_headers):
+    """REQ-ENTRY-5: the cross-user 404'd update leaves the entry untouched."""
+    alice_headers = auth_headers("alice")
+    bob_headers = auth_headers("bob", "bobspassword123")
+    bob_mood = _create_mood(client, bob_headers, "bob")
+    alice_mood = _create_mood(client, alice_headers, "alice")
+    entry = _create_entry(
+        client, alice_headers, "alice", content="Alice's words.", mood_id=alice_mood["id"]
+    )
+
+    client.put(
+        f"/users/alice/entries/{entry['id']}",
+        json={"content": "Rewritten.", "mood_id": bob_mood["id"]},
+        headers=alice_headers,
+    )
+
+    stored = _fetch_entry(entry["id"])
+    assert stored.mood_id == alice_mood["id"]
+    assert stored.content == "Alice's words."
+
+
+# ==================== REQ-ENTRY-6 ====================
+
+
+def test_deleting_a_linked_mood_still_returns_204(client, auth_headers):
+    """REQ-ENTRY-6: a mood referenced by an entry can still be deleted."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    _create_entry(client, headers, "alice", mood_id=mood["id"])
+
+    response = client.delete(f"/users/alice/moods/{mood['id']}", headers=headers)
+
+    assert response.status_code == 204, response.text
+    assert _fetch_mood(mood["id"]) is None
+
+
+def test_deleting_a_linked_mood_keeps_the_entry(client, auth_headers):
+    """REQ-ENTRY-6: the linked entry is not deleted along with the mood."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    entry = _create_entry(client, headers, "alice", mood_id=mood["id"])
+
+    client.delete(f"/users/alice/moods/{mood['id']}", headers=headers)
+
+    response = client.get(f"/users/alice/entries/{entry['id']}", headers=headers)
+    assert response.status_code == 200, response.text
+
+
+def test_deleting_a_linked_mood_nulls_the_entrys_mood_id(client, auth_headers):
+    """REQ-ENTRY-6: the surviving entry is unlinked — its mood_id becomes null."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    entry = _create_entry(client, headers, "alice", mood_id=mood["id"])
+
+    client.delete(f"/users/alice/moods/{mood['id']}", headers=headers)
+
+    response = client.get(f"/users/alice/entries/{entry['id']}", headers=headers)
+    assert response.json()["mood_id"] is None
+
+
+def test_deleting_a_linked_mood_leaves_the_entrys_other_fields_untouched(client, auth_headers):
+    """REQ-ENTRY-6: only mood_id changes — content and timestamp survive intact."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    entry = _create_entry(
+        client,
+        headers,
+        "alice",
+        content="The day the mood was deleted.",
+        timestamp="2024-05-06T07:08:09",
+        mood_id=mood["id"],
+    )
+
+    client.delete(f"/users/alice/moods/{mood['id']}", headers=headers)
+
+    body = client.get(f"/users/alice/entries/{entry['id']}", headers=headers).json()
+    assert body["content"] == "The day the mood was deleted."
+    assert body["timestamp"] == "2024-05-06T07:08:09"
+
+
+def test_deleting_a_mood_unlinks_every_entry_that_referenced_it(client, auth_headers):
+    """REQ-ENTRY-6: all entries linked to the deleted mood are unlinked, not just one."""
+    headers = auth_headers("alice")
+    mood = _create_mood(client, headers, "alice")
+    first = _create_entry(client, headers, "alice", content="First.", mood_id=mood["id"])
+    second = _create_entry(client, headers, "alice", content="Second.", mood_id=mood["id"])
+
+    client.delete(f"/users/alice/moods/{mood['id']}", headers=headers)
+
+    assert _fetch_entry(first["id"]).mood_id is None
+    assert _fetch_entry(second["id"]).mood_id is None
+
+
+def test_deleting_a_mood_leaves_entries_linked_to_other_moods_alone(client, auth_headers):
+    """REQ-ENTRY-6: the unlinking is scoped to the deleted mood's own entries."""
+    headers = auth_headers("alice")
+    deleted_mood = _create_mood(client, headers, "alice", energy=0.5, valence=0.5)
+    kept_mood = _create_mood(client, headers, "alice", energy=-0.5, valence=-0.5)
+    _create_entry(client, headers, "alice", content="Doomed link.", mood_id=deleted_mood["id"])
+    kept_entry = _create_entry(
+        client, headers, "alice", content="Untouched link.", mood_id=kept_mood["id"]
+    )
+
+    client.delete(f"/users/alice/moods/{deleted_mood['id']}", headers=headers)
+
+    assert _fetch_entry(kept_entry["id"]).mood_id == kept_mood["id"]

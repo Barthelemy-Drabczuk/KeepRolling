@@ -86,6 +86,14 @@ under "Open Questions" rather than guessed into a REQ.
 - **REQ-ENTRY-4**: `GET`, `PUT`, and `DELETE` on
   `/users/{username}/entries/{entry_id}` shall return 404 when no entry
   with that id exists for that user.
+- **REQ-ENTRY-5**: A journal entry shall accept an optional `mood_id`,
+  linking it to one of the same user's mood entries. If `mood_id` is
+  supplied and does not reference a mood owned by the same user (whether
+  the id doesn't exist at all, or belongs to a different user), the
+  request shall return 404.
+- **REQ-ENTRY-6**: Deleting a mood that is linked from one or more
+  journal entries shall unlink those entries (`mood_id` set to null)
+  rather than failing the deletion or deleting the entries themselves.
 
 ## Analytics
 
