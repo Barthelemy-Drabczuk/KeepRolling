@@ -73,7 +73,7 @@ Follow PEP 8. `ruff` (configured in `pyproject.toml`'s `[tool.ruff]`,
 `pixi run -e dev lint` and `pixi run -e dev format-check` before treating
 work as done; `pixi run -e dev format` auto-fixes formatting. The existing
 codebase is not yet clean (mostly trailing whitespace and import
-ordering — `pixi run -e dev lint` currently reports ~340 issues, largely
+ordering — `pixi run -e dev lint` currently reports ~320 issues, largely
 in `backend/db.py` and files ruff hasn't touched yet); don't take existing
 code as a style example, and don't take on a repo-wide reformat as a side
 effect of an unrelated change — fix style in files you're already editing
@@ -144,16 +144,22 @@ bundling it.
 - **`database.py`** — SQLAlchemy engine/session setup from `DATABASE_URL`,
   plus the `get_db()` FastAPI dependency and `init_db()` (called on the
   `startup` event to create tables — there's no separate seed/init script;
-  schema also evolves via Alembic migrations in `backend/alembic/versions/`,
-  currently empty).
+  schema also evolves via Alembic migrations in `backend/alembic/versions/`
+  — hand-written, not `--autogenerate`d, since there's no live Postgres to
+  diff against in a typical dev/CI environment here; each has been verified
+  by applying it to a real Postgres via `docker-compose up -d db`).
 - **`models.py`** — the three tables: `UserModel` 1—N `MoodModel` and 1—N
   `EntryModel` (both `cascade="all, delete-orphan"`). `MoodModel.energy` and
   `.valence` are floats constrained to **-1.0..1.0** (low↔high energy,
   unpleasant↔pleasant valence) — this is the actual constraint, independent
-  of the README's mention of the six-zone circumplex labels.
+  of the README's mention of the six-zone circumplex labels. `MoodModel` has
+  an optional `notes` field (≤1000 chars); `EntryModel` has an optional
+  `mood_id` FK linking a journal entry to one of the same user's moods —
+  deleting a linked mood nulls out `mood_id` on referencing entries rather
+  than failing or cascading (see `delete_mood` in `app.py`).
 - **`schemas.py`** — Pydantic request/response models, enforcing the same
   -1.0..1.0 range plus field-length limits (username 3-50 chars, password
-  min 8 chars, journal content 1-5000 chars).
+  min 8 chars, journal content 1-5000 chars, mood notes 1000 chars).
 - **`auth.py`** — bcrypt password hashing (72-byte truncation) and JWT
   issuance/validation. `get_current_active_user` is the dependency every
   protected route uses; `app.py` additionally re-checks
@@ -168,7 +174,12 @@ Every mutating endpoint in `app.py` follows the same shape: authenticate →
 confirm `current_user.username == {username}` (403 if not) → look up the
 user (404 if missing) → look up the child resource by id scoped to that user
 (404 if missing) → mutate. When adding endpoints, match this order so
-authorization checks stay ahead of existence checks.
+authorization checks stay ahead of existence checks. `GET /users/{username}`
+is the one exception worth knowing about: it requires authentication but
+*not* that the caller matches `{username}` — any authenticated user can look
+up any other user's basic profile. That's deliberate (see `BUSINESS.md`'s
+REQ-USER-6) and distinct from `GET /users/{username}/full`, which is
+self-only.
 
 ### Frontend
 
