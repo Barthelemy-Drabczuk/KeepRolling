@@ -183,6 +183,14 @@ Consequently:
   commit, **not** reaching for the `user`/`Screen` fixtures. When FE-4/5/6
   contracts are written, split each into a server-observable part (test it
   with `client`) and a browser-only part (manual), and say which is which.
+  **Amended by FE-4:** the carve-out is narrower than the FE-4 sketch above
+  implies. It covers *real mouse events*, not arithmetic and not the initial
+  render. FE-4's entry below splits it three ways — pure arithmetic
+  (`pixel_to_mood`, plain unit test), initial render (the pad's `size` /
+  `events` / SVG `content` are all server-rendered props, `client` fixture),
+  and only the live drag (manual). Later items should look for the same
+  three-way split rather than assuming "it's interactive" means "it's
+  manual".
 - Whatever an FE item's UI does, the REST endpoint underneath it is already
   covered by ordinary API tests. Prefer pushing a behavior's assertion down
   to that layer over trying to observe it through the UI.
@@ -525,3 +533,223 @@ manual acceptance steps in `TASKS.md`'s FE-3b row — login-success (incl.
 inspecting `backend/app/.nicegui/storage-user-*.json` for `token` +
 `username`), register-success, login-401, register-400 — all four required,
 and the result recorded in the commit message.
+
+### FE-4 — The mood pad at `/`
+
+No new component. New file **`backend/app/frontend/mood_pad.py`**, the
+second per-module page file after FE-3a's `frontend/auth.py`, with the same
+`create() -> None` shape.
+
+**The `@ui.page("/", title="Moodometer")` definition moves out of
+`create_pages()` into `mood_pad.py` entirely** — it is not "the body gets
+replaced in place". Rationale: FE-3a established that a page's decorator
+and its body live together in the page module; `/` was only left inline
+because FE-1 had nothing else to put there. After FE-4, `create_pages()`
+contains no `@ui.page` block at all and is purely a registration list,
+which is the seam FE-5…FE-10 hang on:
+
+```python
+def create_pages() -> None:
+    """Register every NiceGUI page."""
+    mood_pad.create()
+    auth_pages.create()
+```
+
+`frontend/__init__.py` gains `from . import mood_pad` alongside
+`from . import auth as auth_pages`; the `ui` import there becomes unused
+once the inline page goes, so drop it (ruff `F401`) and keep
+`from nicegui import app` for `configure_theme()`. `title="Moodometer"` is
+load-bearing: it is the only thing keeping FE-1's
+`test_root_page_serves_nicegui_placeholder` green once the
+`ui.label("Moodometer")` placeholder is deleted. **No auth guard on `/`**,
+consistent with FE-3a — so FE-3b's `RedirectResponse`-vs-`ui.navigate.to`
+forward pointer is *not* triggered by this item and stays open for whichever
+item first withholds content.
+
+#### The pure function (the one unit-tested thing)
+
+```python
+def pixel_to_mood(x: float, y: float, width: float, height: float) -> tuple[float, float]:
+    """Map a pad pixel to a clamped ``(valence, energy)`` pair."""
+    valence = min(1.0, max(-1.0, x / width * 2 - 1))
+    energy = min(1.0, max(-1.0, 1 - y / height * 2))
+    return valence, energy
+```
+
+**The return order is `(valence, energy)` — the opposite of how the rest of
+this codebase orders the pair** (`MoodModel`, `schemas`, `analytics`, and
+FE-4's own readout label all say energy first). This is pinned by
+`tests/test_mood_pad.py`, which reads corner `(0, 0)` as `(-1.0, 1.0)`; it
+must not be "fixed" by making the implementation disagree with the tests.
+Every call site therefore unpacks `valence, energy = pixel_to_mood(...)` and
+must re-order when handing the pair to anything else. A module-private
+inverse exists for the marker, so the clamp is not re-implemented inline:
+
+```python
+def _mood_to_pixel(valence: float, energy: float, width: float, height: float) -> tuple[float, float]:
+    return (valence + 1) / 2 * width, (1 - energy) / 2 * height
+```
+
+#### The pad element and the SVG, literally
+
+`PAD_WIDTH = PAD_HEIGHT = 400`, `QUADRANT = 200`. The element:
+
+```python
+pad = ui.interactive_image(
+    size=(PAD_WIDTH, PAD_HEIGHT),          # no `src`: source-less is legal and needs no asset
+    events=["mousedown", "mousemove", "mouseup"],
+    cross=False,
+    content=_pad_svg(*_mood_to_pixel(0.0, 0.0, PAD_WIDTH, PAD_HEIGHT)),
+    on_mouse=handle_mouse,
+)
+ui.label(_readout(0.0, 0.0))               # "Energy: 0.00 · Valence: 0.00"
+```
+
+`_pad_svg(marker_x, marker_y) -> str` builds the whole overlay so FE-5/FE-6
+re-render it by assigning `pad.content = _pad_svg(...)` rather than
+string-patching. It returns `"".join(parts)` of these elements, in this
+order. The four rects are exactly the quadrants (the tests compare
+`(x, y, width, height)` to `(left, top, 200.0, 200.0)` for equality, so
+these are not approximate):
+
+| slot | fill | x | y | w | h |
+|---|---|---|---|---|---|
+| top-left | `var(--q-high-energy-unpleasant)` | 0 | 0 | 200 | 200 |
+| top-right | `var(--q-high-energy-pleasant)` | 200 | 0 | 200 | 200 |
+| bottom-left | `var(--q-low-energy-unpleasant)` | 0 | 200 | 200 | 200 |
+| bottom-right | `var(--q-low-energy-pleasant)` | 200 | 200 | 200 | 200 |
+
+Then seven `<text x=".." y=".." text-anchor="middle" font-family="sans-serif"
+font-size="14" fill="..">CAPTION</text>`. The tests read the `x`/`y`
+*attributes* and require `left <= x <= left+200` and `top <= y <= top+200`,
+so the anchor point alone is what is checked — but these coordinates are
+also chosen so the *rendered* string stays inside its quadrant at 14px
+(the longest, "We are so fucking back", is ~155px wide and is nudged
+inboard to x=290 for that reason, breaking the otherwise-symmetric
+placement on purpose). Single-caption quadrants sit at the quadrant centre;
+multi-caption quadrants stack along the quadrant's diagonal, **most-central
+first**, matching the requirement's stated reading order — distance from the
+pad centre (200, 200) increases down each group:
+
+| caption | quadrant | x | y | dist. from centre |
+|---|---|---|---|---|
+| Fuck it we ball | top-left | 100 | 100 | 141 |
+| We are so fucking back | top-right | 290 | 130 | 114 |
+| Let's fucking goooo | top-right | 320 | 70 | 177 |
+| It is what it is | bottom-left | 130 | 270 | 99 |
+| It's so over | bottom-left | 100 | 300 | 141 |
+| Mom would be sad | bottom-left | 70 | 330 | 184 |
+| We vibing | bottom-right | 300 | 300 | 141 |
+
+Caption `fill` is `#ffffff` in the top-left quadrant only (over `#783020`)
+and `#202020` in the other three; those are plain hex, not palette
+references, because they are contrast against the palette rather than the
+palette itself. Only `<rect>`s may carry a `var(--q-...)` fill — the tests
+assert *exactly one* rect per slot colour.
+
+Finally the marker, two concentric rings so it stays visible over all four
+quadrant colours (it sits where they meet). Coordinates are formatted
+`:.1f`, which keeps the centre at `"200.0"` — parsed by the test as `200.0`
+— and stops drag updates emitting 17-digit floats:
+
+```
+<circle cx="200.0" cy="200.0" r="9" fill="none" stroke="#202020" stroke-width="4" />
+<circle cx="200.0" cy="200.0" r="9" fill="none" stroke="#ffffff" stroke-width="2" />
+```
+
+Two hard constraints on anything ever added to this string, both from
+reading NiceGUI 3.16.0 rather than guessing:
+
+- **No `{` or `}`, anywhere** — no inline `style="..."`, no CSS block.
+  `content` is serialized into the same HTML document that
+  `tests/test_frontend.py`'s brace-depth `_rendered_props` helper and the
+  `const vue_config = (\{.*?\});` regex scan, and a brace inside the SVG
+  mis-parses them. (`var(--q-...)` uses parentheses, so the palette
+  reference is safe.)
+- **No backtick and no `${`** — the served page embeds `content` inside a JS
+  ``String.raw`...` `` template literal. The seven captions contain neither;
+  apostrophes ("Let's", "It's") are fine and must be written literally, not
+  as `&#39;`.
+
+#### Colour form: `var(--q-{slot})` is confirmed, not a manual check
+
+FE-2 deferred "which spelling at the use site"; FE-3a settled it for
+`ui.button(color=...)` (bare hyphenated name); FE-4 settles it for raw SVG.
+The answer is `fill="var(--q-high-energy-unpleasant)"` — hyphenated,
+because `nicegui/static/nicegui.js:59-66` does
+`document.body.style.setProperty("--q-" + color.replaceAll("_", "-"), ...)`,
+so the property that actually exists is `--q-high-energy-unpleasant` and the
+pad's `<svg>`, being a descendant of `<body>`, inherits it.
+
+**The DOMPurify question the FE-4 investigation flagged is resolved in the
+affirmative — do not re-raise it as a manual check.** Read from the bundled
+`nicegui/static/dompurify.mjs`: `fill` is *not* in `URI_SAFE_ATTRIBUTES`
+(`["alt","class","for","id","label","name","pattern","placeholder","role",
+"summary","title","value","style","xmlns"]`), so its value is tested against
+
+```
+IS_ALLOWED_URI = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|matrix):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
+```
+
+and `var(--q-...)` matches the third alternative (`var` then `(`), so the
+attribute is kept. `#202020`, `none`, `sans-serif` and `14` match too. Also
+confirmed present in the `USE_PROFILES: {svg: true}` allow-lists: the tags
+`rect`, `text`, `circle` and the attributes `fill`, `x`, `y`, `width`,
+`height`, `cx`, `cy`, `r`, `stroke`, `stroke-width`, `font-family`,
+`font-size`, `text-anchor`. One caveat, not a blocker: the value is
+whitespace-stripped before that regex runs, so write `var(--q-x)` with no
+spaces inside the parentheses. Cosmetic consequence worth knowing: the
+palette is applied in a `mounted()` hook, so on the very first paint the
+custom property may not yet resolve and `fill` falls back to black for a
+frame.
+
+#### The drag handler (browser-only half)
+
+`events=[...]` with no handler would be dead, and `pixel_to_mood` would be
+unused code, so FE-4 owns the handler — it is in scope, it is just not
+pytest-reachable:
+
+```python
+def handle_mouse(event: events.MouseEventArguments) -> None:
+    nonlocal dragging
+    if event.type == "mousedown":
+        dragging = True
+    elif event.type == "mouseup":
+        dragging = False
+        return
+    elif not dragging:
+        return
+    valence, energy = pixel_to_mood(event.image_x, event.image_y, PAD_WIDTH, PAD_HEIGHT)
+    pad.content = _pad_svg(*_mood_to_pixel(valence, energy, PAD_WIDTH, PAD_HEIGHT))
+```
+
+Routing the marker back through `_mood_to_pixel(pixel_to_mood(...))` is
+deliberate: it re-uses the one clamp, so a fast pointer whose `image_x`
+overshoots `size` parks the marker on the edge instead of outside the pad.
+`cross=False` is also deliberate and not just a default restated — `cross`
+installs its own `mousemove` on the same `<img>` via a second object-syntax
+`v-on`, which would collide with the `mousemove` in `events`.
+
+**FE-4 updates the marker only; the readout label keeps its initial text.**
+Live label updates and the confirm button are FE-5, per FE-4's row, and
+FE-5 extends this same handler rather than adding a second one. `_readout(
+energy, valence) -> f"Energy: {energy:.2f} · Valence: {valence:.2f}"` is
+defined here (energy first, note the flip against `pixel_to_mood`'s return
+order) so FE-5 has one place to call. The separator is U+00B7 MIDDLE DOT.
+
+Out of scope, deliberately: `POST /moods`, any `Authorization` header, the
+confirm button (FE-5); keyboard nudging (FE-6); any auth guard.
+
+**Traceability:** FE-4 → `frontend.mood_pad.pixel_to_mood()` plus
+`frontend.mood_pad.create()`'s `/` page in
+`backend/app/frontend/mood_pad.py`, invoked from `frontend.create_pages()`
+in `backend/app/frontend/__init__.py`. Verified by
+`backend/app/tests/test_mood_pad.py` (11 unit tests on the mapping) and the
+20 FE-4 tests in `backend/app/tests/test_frontend.py` (plain `client`
+fixture, asserting the pad's `size` / `events` props and the four fills,
+seven captions, marker centre and readout text inside the server-rendered
+`content`). Drag-tracking and marker movement are the manual half per the
+Testing policy above: with the dev server running from `backend/app/`, press
+and drag on the pad and confirm the marker follows the cursor, stops at the
+edge rather than leaving the pad, and does not move when the button is up —
+record the result in the commit message.
