@@ -935,3 +935,198 @@ recorded in the commit message):
    same storage file to another existing user, making the API answer 403) and
    confirm the notification is exactly "Could not complete the request." with
    no response body, no traceback, and no navigation.
+
+### FE-6a — Keyboard focus and arrow-key nudging on the pad
+
+No new component, no new file, no new dependency. Everything lands inside
+`backend/app/frontend/mood_pad.py`: one module-level pure function (`nudge`)
+beside `pixel_to_mood`, and — inside the existing `create()` → `index()`
+closure (FE-4/FE-5) — one extra closure plus two configuration calls on the
+existing `pad` handle. `frontend/__init__.py`, `app.py`, `frontend/api.py`
+and the imports of `mood_pad.py` are all unchanged (`events` is already
+imported and is where `GenericEventArguments` lives).
+
+#### The pure function, literally
+
+```python
+STEP = 0.05
+
+_NUDGES: dict[str, tuple[float, float]] = {
+    "ArrowRight": (STEP, 0.0),
+    "ArrowLeft": (-STEP, 0.0),
+    "ArrowUp": (0.0, STEP),
+    "ArrowDown": (0.0, -STEP),
+}
+
+
+def nudge(valence: float, energy: float, key: str) -> tuple[float, float]:
+    """Move a ``(valence, energy)`` pair one step in ``key``'s direction."""
+    if key not in _NUDGES:
+        return valence, energy
+    d_valence, d_energy = _NUDGES[key]
+    return (
+        round(min(1.0, max(-1.0, valence + d_valence)), 2),
+        round(min(1.0, max(-1.0, energy + d_energy)), 2),
+    )
+```
+
+Load-bearing, each pinned by a test in `tests/test_mood_pad.py`:
+
+- **Return order is `(valence, energy)`**, same as `pixel_to_mood` and same as
+  `nudge`'s own parameters, so the handler can do `set_mood(*nudge(...))`
+  exactly like FE-5 does `set_mood(*pixel_to_mood(...))`. FE-4's entry explains
+  why this order is the opposite of the rest of the codebase and why that must
+  not be "fixed".
+- **Clamp before round, not after.** `0.98 + 0.05` is `1.0300000000000002`;
+  clamping first yields exactly `1.0`, and `round(1.0, 2)` leaves it. Rounding
+  first would give `1.03` and the clamp would still save it here, but the order
+  above keeps the edge value bit-identical to the literal `1.0` the four
+  clamp tests compare with `==`.
+- **`round(..., 2)` is behavioural, not cosmetic.** Three `ArrowUp`s from the
+  origin must land on exactly `0.15`, not `0.15000000000000002` — the tests
+  assert exact float equality, deliberately not `pytest.approx`, because the
+  value is POSTed verbatim by FE-5's `log_mood()`. Do not drop the rounding
+  "because the readout formats to 2 decimals anyway"; the readout is not the
+  only consumer.
+- **A non-arrow key returns the inputs untouched**, via the early return —
+  not `round()`ed inputs. `("Enter", "Escape", "a", "Tab", "")` are all
+  parametrized no-op cases, and `""` in particular means the handler may pass
+  a missing key through without a separate guard.
+- **`STEP` is module-level and named**; `tests/test_mood_pad.py` defines its
+  own `STEP = 0.05` constant and compares against it, so the value is pinned
+  at 0.05 but the two constants are independent — the test does not import it.
+
+Knowingly accepted duplication: the `min(1.0, max(-1.0, ...))` clamp now
+appears in both `pixel_to_mood` and `nudge`. Extracting a `_clamp()` helper
+would mean editing FE-4's already-green function for no behavioural reason, so
+FE-6a leaves it. If a third clamp site appears, extract then.
+
+Consequence worth knowing (not test-observable, not a bug): `pixel_to_mood`
+does *not* round, so a drag leaves `current_valence`/`current_energy`
+un-rounded; the first nudge afterwards snaps them onto the 2-decimal grid. The
+readout already displays 2 decimals, so the jump is invisible there — it shows
+up only in the value POSTed to `/moods`, and rounding it is the requirement.
+
+#### The wiring, literally
+
+Inside `index()`, `handle_key` is defined immediately after FE-4's
+`handle_mouse`, and the two configuration calls go immediately after the
+`pad = ui.interactive_image(...)` statement (before `readout = ui.label(...)`,
+which `set_mood` only touches at call time, so ordering is safe):
+
+```python
+        def handle_key(event: events.GenericEventArguments) -> None:
+            key = event.args.get("key", "")
+            # FE-6b hooks in here: `if key == "Enter": await log_mood()` —
+            # which makes this handler async, so keep that in mind rather
+            # than adding a second keydown subscription.
+            valence, energy = nudge(current_valence, current_energy, key)
+            if (valence, energy) != (current_valence, current_energy):
+                set_mood(valence, energy)
+
+        pad = ui.interactive_image(...)   # FE-4, unchanged
+        pad.props("tabindex=0")
+        pad.on("keydown", handle_key, args=["key"])
+```
+
+`handle_key` reads `current_valence`/`current_energy` but never rebinds them
+(`set_mood` owns that), so it needs **no `nonlocal`** — unlike `handle_mouse`,
+which does rebind `dragging`. Adding one would be harmless but misleading.
+
+The `(valence, energy) != (current_valence, current_energy)` guard is FE-6a's
+one call beyond the row's text: `nudge` already makes a non-arrow key a no-op
+arithmetically, but calling `set_mood` unconditionally would still reassign
+`pad.content` and `readout.text` and enqueue a full SVG update over the
+websocket on *every* keystroke while the pad has focus — including held arrow
+keys repeating against a clamped edge. Not observable in any test either way;
+the guard is 2 lines and skips the traffic. `set_mood` remains the single
+writer of state + marker + readout, per FE-5's Decision 1 — the handler must
+not touch `pad.content`, `readout.text`, or the two floats directly.
+
+#### `.on('keydown', handler, args=['key'])` — what actually reaches the handler
+
+Verified by reading NiceGUI 3.16.0 in `.pixi/envs/default`, not recalled, and
+verified for `.on()` specifically rather than inherited from `ui.keyboard`
+(which has its own `KeyEventArguments` wrapper and is *not* what this uses):
+
+1. `Element.on()` (`nicegui/element.py:397`) normalizes a flat
+   `args=['key']` to `[['key']]` — "for the first emitted argument, keep only
+   the `key` field". So `args=['key']` and `args=[['key']]` are the same call.
+2. Client-side, the default `js_handler` `(...args) => emit(...args)` passes
+   the raw DOM `KeyboardEvent` as the single argument;
+   `stringifyEventArgs` (`nicegui/static/nicegui.js:176-201`) filters it to the
+   requested keys and JSON-**stringifies** it, so the socket message carries
+   `args: ['{"key":"ArrowUp"}']`.
+3. Server-side, `Client.handle_event` (`nicegui/client.py:401-403`)
+   `json.loads` each element **and unwraps the list when there is exactly
+   one**: `if len(msg['args']) == 1: msg['args'] = msg['args'][0]`.
+
+So the handler receives an `events.GenericEventArguments` whose `.args` is the
+**dict `{"key": "ArrowUp"}`** — not a list, not a JSON string, not a
+`KeyboardEvent`-like object with attribute access. `event.args["key"]` /
+`event.args.get("key", "")` is the correct read; `event.key`,
+`event.args[0]["key"]` and `json.loads(event.args)` all fail. Keeping
+`args=['key']` (rather than `None`, which sends the whole event) is what keeps
+the message small and is why only `key` is available — `shiftKey`, `repeat`,
+etc. are not delivered and must not be assumed.
+
+Two more facts that make this land on the right DOM node, both from
+`nicegui/elements/interactive_image.js`: the component's template has a
+**single root `<div>`**, and its declared `props` are only
+`src, content, size, events, cross, t, sanitize`. `tabindex` and the
+`onKeydown` listener are therefore both `$attrs` fallthrough and Vue 3 applies
+both to that same root div — so the element that becomes focusable is exactly
+the element that receives the key events. This is also why the pad's existing
+`on_mouse`/`events=` channel cannot serve: those are wired to the inner
+`<img>`'s `v-on` and emit a fixed `mouse` payload (`mouse_event_type`,
+`image_x`, `image_y`, `button`, `buttons`, and the four modifier flags) with
+no key identity anywhere in it.
+
+`pad.props("tabindex=0")` renders as the **string** `"0"`, not the int `0`:
+`Props.parse` (`nicegui/props.py:172`) `ast.literal_eval`s only quoted/bracketed
+values and stores an unquoted one verbatim. That is exactly what
+`test_mood_pad_is_keyboard_focusable` asserts, so `props("tabindex=0")` is
+required and `props('tabindex="0"')` would render `0` and fail. Both calls
+return `Self`, so chaining them into one statement is equivalent; two
+statements are pinned only for readability.
+
+#### Open UX detail, deliberately not designed around
+
+With the pad focused, `ArrowUp`/`ArrowDown` also **scroll the page**, because
+the default `js_handler` does not `preventDefault()`. Suppressing it would mean
+changing the mechanism the requirement settled (`js_handler=`, or a
+`.on('keydown.prevent', ...)` modifier — which NiceGUI does support, see
+`event_listener.py:30-35`, but which would apply to *every* key, swallowing
+`Tab` and trapping keyboard focus on the pad). FE-6a therefore ships without
+it. Confirm the actual severity in the manual check below; if it is
+disruptive, it is a new decision (a per-arrow-key subscription, or a scoped
+`js_handler`), not a silent amendment here.
+
+Out of scope, deliberately: Enter-to-submit (FE-6b — the seam is the comment
+in `handle_key` above); any visible focus ring or `autofocus`; any other key
+binding; any auth guard on `/`; any change to `nudge`'s step size per modifier
+key (the `key`-only payload could not support it anyway).
+
+**Traceability:** FE-6a → `frontend.mood_pad.nudge()` plus the `handle_key()`
+closure and the `pad.props("tabindex=0")` / `pad.on("keydown", handle_key,
+args=["key"])` calls inside `frontend.mood_pad.create()`'s `index()` page in
+`backend/app/frontend/mood_pad.py`. Split in two, the same shape as FE-4/FE-5.
+**Automated slice:** the 11 `nudge` unit tests at the end of
+`backend/app/tests/test_mood_pad.py`, plus
+`backend/app/tests/test_frontend.py::test_mood_pad_is_keyboard_focusable`
+(plain `client` fixture; `tabindex` is a server-rendered prop). **Manual
+slice** (dev server from `backend/app/`, per the Testing policy; all four
+required, result recorded in the commit message):
+
+1. *Focus* — `Tab` to the pad (or click it) and confirm it takes focus, then
+   press each arrow key once and confirm the marker steps and the readout
+   changes by 0.05 in the expected direction (Up = higher energy, Right = more
+   pleasant).
+2. *Lockstep with a drag* — drag to an off-centre point, then nudge: the
+   marker must continue from where the drag left it, not jump to the origin,
+   and the readout must agree with the marker.
+3. *Clamp* — hold an arrow key until the marker reaches an edge and confirm it
+   stops there, with the readout pinned at `±1.00` rather than continuing.
+4. *Page scroll* — note whether `ArrowUp`/`ArrowDown` scroll the page while
+   the pad is focused (see the open UX detail above) and record the answer,
+   whatever it is.

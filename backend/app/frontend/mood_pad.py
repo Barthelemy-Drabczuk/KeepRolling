@@ -25,6 +25,27 @@ def pixel_to_mood(x: float, y: float, width: float, height: float) -> tuple[floa
     return valence, energy
 
 
+STEP = 0.05
+
+_NUDGES: dict[str, tuple[float, float]] = {
+    "ArrowRight": (STEP, 0.0),
+    "ArrowLeft": (-STEP, 0.0),
+    "ArrowUp": (0.0, STEP),
+    "ArrowDown": (0.0, -STEP),
+}
+
+
+def nudge(valence: float, energy: float, key: str) -> tuple[float, float]:
+    """Move a ``(valence, energy)`` pair one step in ``key``'s direction."""
+    if key not in _NUDGES:
+        return valence, energy
+    d_valence, d_energy = _NUDGES[key]
+    return (
+        round(min(1.0, max(-1.0, valence + d_valence)), 2),
+        round(min(1.0, max(-1.0, energy + d_energy)), 2),
+    )
+
+
 def _mood_to_pixel(
     valence: float, energy: float, width: float, height: float
 ) -> tuple[float, float]:
@@ -100,6 +121,15 @@ def create() -> None:
                 return
             set_mood(*pixel_to_mood(event.image_x, event.image_y, PAD_WIDTH, PAD_HEIGHT))
 
+        def handle_key(event: events.GenericEventArguments) -> None:
+            key = event.args.get("key", "")
+            # FE-6b hooks in here: `if key == "Enter": await log_mood()` --
+            # which makes this handler async, so keep that in mind rather
+            # than adding a second keydown subscription.
+            valence, energy = nudge(current_valence, current_energy, key)
+            if (valence, energy) != (current_valence, current_energy):
+                set_mood(valence, energy)
+
         pad = ui.interactive_image(
             size=(PAD_WIDTH, PAD_HEIGHT),
             events=["mousedown", "mousemove", "mouseup"],
@@ -107,6 +137,8 @@ def create() -> None:
             content=_pad_svg(*_mood_to_pixel(0.0, 0.0, PAD_WIDTH, PAD_HEIGHT)),
             on_mouse=handle_mouse,
         )
+        pad.props("tabindex=0")
+        pad.on("keydown", handle_key, args=["key"])
         readout = ui.label(_readout(0.0, 0.0))
 
         async def log_mood() -> None:

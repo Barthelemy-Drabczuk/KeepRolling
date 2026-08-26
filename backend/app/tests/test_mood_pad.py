@@ -1,4 +1,7 @@
-"""Unit tests for ``frontend/mood_pad.py``'s pixel -> mood mapping (FE-4).
+"""Unit tests for ``frontend/mood_pad.py``'s pure functions.
+
+Two of them: ``pixel_to_mood`` (FE-4), documented immediately below, and
+``nudge`` (FE-6a), documented above its own tests at the end of the file.
 
 FE-4 exposes the pad's coordinate mapping as a pure function so its
 arithmetic gets a real red/green instead of falling under
@@ -109,3 +112,94 @@ def test_far_out_of_range_input_stays_within_the_model_range() -> None:
 
     assert -1.0 <= valence <= 1.0
     assert -1.0 <= energy <= 1.0
+
+
+# --- FE-6a: keyboard nudging ------------------------------------------------
+#
+#     nudge(valence: float, energy: float, key: str) -> tuple[float, float]
+#
+# ArrowUp/ArrowDown move energy by +STEP/-STEP, ArrowRight/ArrowLeft move
+# valence by +STEP/-STEP (screen-relative: up = more energy, right = more
+# pleasant, matching pixel_to_mood's inverted-y convention above). Each
+# result is clamped to [-1.0, 1.0] and rounded to 2 decimal places; any
+# other key returns the input unchanged.
+#
+# Return-tuple ORDER is (valence, energy) -- the same order pixel_to_mood
+# uses and the same order as nudge's own parameters, so the handler in
+# mood_pad.py can pipe one into set_mood(*...) exactly like the other.
+#
+# The rounding is a behavioural requirement, not a test convenience: the
+# readout renders 2 decimals and the value is POSTed verbatim, so these
+# tests assert exact float equality (`== 0.15`) rather than
+# pytest.approx -- approx would pass on the un-rounded
+# 0.15000000000000002 and let the drift through.
+#
+# Scope: the arithmetic only. The keydown subscription and real key-press
+# dispatch are manual-verification-only per ARCHITECTURE.md's Testing
+# policy; only focusability (tests/test_frontend.py) and this function are
+# automated.
+
+STEP = 0.05
+
+
+def _nudge() -> Callable[[float, float, str], tuple[float, float]]:
+    """Return ``frontend.mood_pad.nudge``."""
+    from frontend.mood_pad import nudge
+
+    return nudge
+
+
+def test_arrow_up_raises_energy_by_one_step() -> None:
+    """ArrowUp from the origin raises energy by 0.05 and leaves valence alone."""
+    assert _nudge()(0.0, 0.0, "ArrowUp") == (0.0, STEP)
+
+
+def test_arrow_down_lowers_energy_by_one_step() -> None:
+    """ArrowDown from the origin lowers energy by 0.05 and leaves valence alone."""
+    assert _nudge()(0.0, 0.0, "ArrowDown") == (0.0, -STEP)
+
+
+def test_arrow_right_raises_valence_by_one_step() -> None:
+    """ArrowRight from the origin raises valence by 0.05 and leaves energy alone."""
+    assert _nudge()(0.0, 0.0, "ArrowRight") == (STEP, 0.0)
+
+
+def test_arrow_left_lowers_valence_by_one_step() -> None:
+    """ArrowLeft from the origin lowers valence by 0.05 and leaves energy alone."""
+    assert _nudge()(0.0, 0.0, "ArrowLeft") == (-STEP, 0.0)
+
+
+def test_arrow_up_clamps_energy_at_the_top_edge() -> None:
+    """ArrowUp within one step of the top yields energy 1.0, not 1.03."""
+    assert _nudge()(0.0, 0.98, "ArrowUp") == (0.0, 1.0)
+
+
+def test_arrow_down_clamps_energy_at_the_bottom_edge() -> None:
+    """ArrowDown within one step of the bottom yields energy -1.0, not -1.03."""
+    assert _nudge()(0.0, -0.98, "ArrowDown") == (0.0, -1.0)
+
+
+def test_arrow_right_clamps_valence_at_the_right_edge() -> None:
+    """ArrowRight within one step of the right edge yields valence 1.0, not 1.03."""
+    assert _nudge()(0.98, 0.0, "ArrowRight") == (1.0, 0.0)
+
+
+def test_arrow_left_clamps_valence_at_the_left_edge() -> None:
+    """ArrowLeft within one step of the left edge yields valence -1.0, not -1.03."""
+    assert _nudge()(-0.98, 0.0, "ArrowLeft") == (-1.0, 0.0)
+
+
+def test_repeated_nudges_do_not_accumulate_binary_float_drift() -> None:
+    """Three ArrowUps land on exactly 0.15, not 0.15000000000000002."""
+    nudge = _nudge()
+    valence, energy = 0.0, 0.0
+    for _ in range(3):
+        valence, energy = nudge(valence, energy, "ArrowUp")
+
+    assert energy == 0.15
+
+
+@pytest.mark.parametrize("key", ["Enter", "Escape", "a", "Tab", ""])
+def test_an_unrecognised_key_leaves_the_mood_unchanged(key: str) -> None:
+    """Any non-arrow key is a no-op: nudge returns its input untouched."""
+    assert _nudge()(0.3, -0.2, key) == (0.3, -0.2)

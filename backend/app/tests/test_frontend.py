@@ -484,3 +484,26 @@ def test_confirm_button_is_enabled_at_initial_render(client) -> None:
     false, never `disable is False`.
     """
     assert _confirm_button_props(client).get("disable") is not True
+
+
+# --- FE-6a: the pad is keyboard-focusable ------------------------------------
+#
+# Only the pad's *focusability* is server-observable: `pad.props('tabindex=0')`
+# renders into GET /'s HTML as a `"tabindex":"0"` entry in the pad element's
+# props (NiceGUI's props parser stores the value as the string "0", not the
+# int 0). Everything else FE-6a specifies -- the `.on('keydown', ...)`
+# subscription, real key-press dispatch, and the marker/readout updates that
+# follow -- runs over NiceGUI's websocket, is unreachable through TestClient,
+# and is manual-verification-only per ARCHITECTURE.md's Testing policy.
+#
+# The nudge arithmetic itself is covered as a plain unit test in
+# tests/test_mood_pad.py; nothing here re-tests it through the frontend.
+#
+# This reads `_pad_props` rather than `_has_props`: the requirement is about
+# *the pad's* props specifically, and `_has_props` would also be satisfied by
+# a tabindex on any other element on the page.
+
+
+def test_mood_pad_is_keyboard_focusable(client) -> None:
+    """The pad renders with tabindex="0", so it can take keyboard focus."""
+    assert _pad_props(client).get("tabindex") == "0"
