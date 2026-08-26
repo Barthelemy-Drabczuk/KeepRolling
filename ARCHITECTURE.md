@@ -1130,3 +1130,144 @@ required, result recorded in the commit message):
 4. *Page scroll* — note whether `ArrowUp`/`ArrowDown` scroll the page while
    the pad is focused (see the open UX detail above) and record the answer,
    whatever it is.
+
+### FE-6b — Enter on the focused pad submits the mood
+
+No new component, no new file, no new function, no new element, no new
+event subscription, and no contract change to anything. FE-6b is a second
+*trigger* for FE-5's already-contracted `log_mood()`, wired into FE-6a's
+already-contracted `handle_key` at the seam FE-6a left for it. The whole
+change is four lines inside
+`backend/app/frontend/mood_pad.py`'s `create()` → `index()` closure.
+
+#### The change, literally
+
+`handle_key` becomes `async def` and gains an Enter branch in place of the
+FE-6b placeholder comment; nothing else in the file moves:
+
+```python
+        async def handle_key(event: events.GenericEventArguments) -> None:
+            key = event.args.get("key", "")
+            if key == "Enter":
+                await log_mood()
+                return
+            valence, energy = nudge(current_valence, current_energy, key)
+            if (valence, energy) != (current_valence, current_energy):
+                set_mood(valence, energy)
+```
+
+The `pad.on("keydown", handle_key, args=["key"])` call is **unchanged** —
+same single subscription, same `args=["key"]` payload. Adding a second
+`.on("keydown", ...)` for Enter is explicitly wrong: it would give the pad
+two listeners racing on the same DOM event and two places to keep in sync.
+
+Load-bearing details:
+
+- **Calling `log_mood()` — the function — is the contract, not
+  re-implementing its body.** "Identical POST, identical 201/401/else
+  branches, identical logged-out short-circuit" is satisfied by there being
+  exactly one implementation. Any copy of the request, the header, or the
+  short-circuit into `handle_key` is drift and must be rejected in review,
+  even if it looks identical at the time.
+- **Early return on Enter, before `nudge`.** Behaviourally this is a free
+  choice: `"Enter"` is not in `_NUDGES`, so FE-6a's guard already makes it a
+  no-op on the marker (and `("Enter", ...)` is a pinned parametrized no-op
+  case in `tests/test_mood_pad.py`). Late ordering would work identically.
+  Early return is chosen so the one `await` sits alone in its own branch and
+  the nudge path keeps its FE-6a shape verbatim.
+- **`await` on `log_mood()` and nothing else.** The nudge branch stays
+  fully synchronous; `set_mood` and `nudge` are not coroutines and must not
+  become ones.
+- **`handle_key` still needs no `nonlocal`.** It reads
+  `current_valence`/`current_energy` (via `log_mood`, which reads them
+  itself) and never rebinds them; `set_mood` remains the single writer of
+  state + marker + readout, per FE-5's Decision 1.
+- **Do not reorder the closures to "fix" the forward reference.**
+  `handle_key` (defined at the top of `index()`) names `log_mood` (defined
+  near the bottom) through the enclosing scope's cell, resolved at *call*
+  time — and `index()` has fully executed before any keydown can arrive, so
+  the name is always bound. Moving `handle_key` below `log_mood` would in
+  turn break its references to `pad`/`readout` ordering assumptions for no
+  gain.
+
+#### Async safety: confirmed, not assumed
+
+`Element.on()` handlers reach `events.handle_event()` via
+`Element._handle_event` (`nicegui/element.py:409-413`) — the same function
+`ui.button(on_click=...)` uses. `handle_event`
+(`nicegui/events.py:455-488`) calls the handler inside the sender's
+`parent_slot`, and when the result is awaitable schedules
+`_await_and_handle_in_context(result, parent_slot)` via
+`background_tasks.create_or_defer`, which **re-enters that same slot context
+before awaiting** and routes exceptions to `app.handle_exception`. So an
+`async` `handle_key` gets exactly the treatment FE-5's `async log_mood`
+already gets from the button: `ui.notify` and `ui.navigate.to` inside it
+resolve against the right client, and a raised exception does not escape
+into the websocket loop. Read from NiceGUI 3.16.0 in `.pixi/envs/default`,
+not recalled.
+
+#### Open UX detail, deliberately not designed around
+
+**Holding Enter submits repeatedly.** A held key fires repeating `keydown`
+events, each dispatching `log_mood()`, each POSTing a duplicate mood.
+FE-6a's `args=["key"]` payload delivers only `key`, so the DOM event's
+`repeat` flag never reaches the server and the handler structurally cannot
+distinguish a repeat from a fresh press. Suppressing it would mean changing
+the payload (`args=["key", "repeat"]`) or the mechanism, i.e. reopening a
+decision FE-6a settled and FE-6b's row explicitly scopes out ("no new
+behavior, no new test target"). FE-6b therefore ships without it, the same
+way FE-6a shipped without `preventDefault()` on the arrow keys. Manual step
+6 below records the actual severity; if it is disruptive, the fix is a new
+requirement (debounce, an in-flight guard that also covers the button, or a
+`repeat`-aware payload), **not** a silent amendment here. Note also that no
+`preventDefault()` question arises for Enter itself: the pad is a plain
+focusable `<div>`, not a form control, and `/` renders no `<form>`, so Enter
+has no default browser action to suppress.
+
+Out of scope, deliberately: any other key binding; a visible focus ring or
+`autofocus`; disabling the button or the key while a request is in flight;
+any auth guard on `/`; any change to `log_mood`, `set_mood`, `nudge`,
+`frontend/api.py`, `frontend/__init__.py` or `app.py`.
+
+**Traceability:** FE-6b → the `if key == "Enter": await log_mood()` branch
+in the `handle_key()` closure of `frontend.mood_pad.create()`'s `index()`
+page, `backend/app/frontend/mood_pad.py`. **No automated tests, and none
+are expected** — unlike FE-4/FE-5/FE-6a this item has no server-observable
+slice at all: it adds no element, no prop, and no pure function, so there is
+nothing for the `client` fixture or a unit test to see, and the action
+underneath is already covered by FE-5's tests plus `tests/test_moods.py`.
+Adding a test that asserts `handle_key` is a coroutine function would test
+the implementation, not the behavior; do not. Per the FE-1 Testing policy
+the NiceGUI `user`/`Screen` fixtures remain banned, so verification is
+**manual only** (dev server from `backend/app/`; all six required, result
+recorded in the commit message):
+
+1. *Logged-out short-circuit* — in a fresh private window with no
+   `app.storage.user` entries, click the pad once to focus it, press Enter,
+   and confirm the notification "Please log in to record a mood." and
+   navigation to `/login` — identical to FE-5's manual step 4.
+2. *Success from a dragged value* — logged in, drag the marker to a
+   distinctive off-centre point, press Enter (the pad still holds focus
+   after the drag) and confirm "Mood logged!" plus the marker and readout
+   snapping back to centre / `0.00`.
+3. *Success from a nudged value, posted verbatim* — logged in, from the
+   centre press `ArrowUp` three times and `ArrowRight` once so the readout
+   reads `Energy: 0.15 · Valence: 0.05`; press Enter, then
+   `GET /users/{username}/moods` (curl with the same bearer token, or
+   `/docs`) and confirm the newest mood is exactly `energy: 0.15`,
+   `valence: 0.05` — not swapped, and not `0.15000000000000002`. This is the
+   step that proves FE-6a's rounding survives to the wire and that the pair
+   is not flipped.
+4. *401 branch* — set `token` in `backend/app/.nicegui/storage-user-*.json`
+   to a garbage string, reload `/`, focus the pad, press Enter, and confirm
+   the same notification and redirect as step 1 (this exercises the real
+   response branch where step 1 exercises the short-circuit).
+5. *Pad not focused does nothing* — click blank page area so the pad loses
+   focus, press Enter, and confirm no notification, no navigation, and no
+   new mood in `GET /moods`. Be careful that focus is not on the "Log this
+   mood" button: Enter on a focused `<button>` is native browser click
+   activation and would legitimately submit, which is unchanged behavior and
+   not what this step is checking.
+6. *Key repeat* — logged in, hold Enter for ~2 seconds, then count the
+   notifications and the moods added by `GET /users/{username}/moods`.
+   Record the count whatever it is; see the open UX detail above.

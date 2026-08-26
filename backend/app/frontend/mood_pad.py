@@ -121,11 +121,11 @@ def create() -> None:
                 return
             set_mood(*pixel_to_mood(event.image_x, event.image_y, PAD_WIDTH, PAD_HEIGHT))
 
-        def handle_key(event: events.GenericEventArguments) -> None:
+        async def handle_key(event: events.GenericEventArguments) -> None:
             key = event.args.get("key", "")
-            # FE-6b hooks in here: `if key == "Enter": await log_mood()` --
-            # which makes this handler async, so keep that in mind rather
-            # than adding a second keydown subscription.
+            if key == "Enter":
+                await log_mood()
+                return
             valence, energy = nudge(current_valence, current_energy, key)
             if (valence, energy) != (current_valence, current_energy):
                 set_mood(valence, energy)
