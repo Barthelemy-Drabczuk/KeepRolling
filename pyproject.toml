@@ -19,12 +19,12 @@ dependencies = [
     "python-multipart>=0.0.6",
     "reportlab>=4.0.0",
     "nicegui>=2.0.0",
+    "httpx>=0.27.0",
 ]
 
 [dependency-groups]
 test = [
     "pytest>=8.0.0",
-    "httpx>=0.27.0",
     "pytest-asyncio>=0.23.0",
 ]
 viz = [

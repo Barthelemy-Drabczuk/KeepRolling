@@ -16,6 +16,7 @@ backend/app/.env
 .ruff_cache/
 .pytest_cache/
 .omc/
+.nicegui/
 
 # OS
 .DS_Store
