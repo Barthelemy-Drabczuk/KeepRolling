@@ -1209,5 +1209,6 @@ async def export_moods_pdf(
 
 STORAGE_SECRET = os.getenv("NICEGUI_STORAGE_SECRET", "change-me-in-production")
 
+frontend.configure_theme()
 frontend.create_pages()
 ui.run_with(app, mount_path="/", storage_secret=STORAGE_SECRET)

@@ -14,7 +14,17 @@ This package is a pure HTTP client of the REST API defined in ``app.py``
 ``analytics``.
 """
 
-from nicegui import ui
+from nicegui import app, ui
+
+
+def configure_theme() -> None:
+    """Bind the circumplex quadrant colours into Quasar's brand palette."""
+    app.colors(
+        high_energy_unpleasant="#783020",
+        high_energy_pleasant="#e0c080",
+        low_energy_unpleasant="#98a8c0",
+        low_energy_pleasant="#a0a888",
+    )
 
 
 def create_pages() -> None:

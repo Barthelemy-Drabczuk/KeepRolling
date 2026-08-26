@@ -188,3 +188,60 @@ page), `GET /docs` → 200 (Swagger UI unshadowed), and `/openapi.json` still
 lists every `/users/...` REST path — so the catch-all mount demonstrably
 shadows nothing. Page title set via `@ui.page("/", title="Moodometer")`
 (NiceGUI otherwise defaults it to "NiceGUI").
+
+### FE-2 — Quadrant colour palette in the Quasar brand config
+
+No new component. The palette is presentation state owned by
+`frontend/`, so it lands there rather than in `app.py`: `frontend/__init__.py`
+gains a second exported function alongside `create_pages()`, and `app.py`
+only calls it. Three reasons this is not just taste. (1) `create_pages()`
+is contracted as *"Register every NiceGUI page"* and is the seam FE-4…FE-10
+hang their per-module `create()` calls on; folding global config into it
+blurs that seam for every later item. (2) The colour names are consumed
+from inside `frontend/` — FE-3's primary buttons, FE-4's quadrant fills,
+FE-9's chart series — so definition and use stay in one module. (3) In
+`app.py` the name `app` is already the `FastAPI` instance, so `app.colors()`
+there would need `from nicegui import app as nicegui_app` and would read
+like configuring the FastAPI app; inside `frontend/__init__.py` there is no
+such collision. What stays in `app.py` is *mounting* — `ui.run_with(app,
+...)` genuinely needs the FastAPI instance and the storage secret; a colour
+palette does not.
+
+```python
+# frontend/__init__.py — imports become `from nicegui import app, ui`
+
+def configure_theme() -> None:
+    """Bind the circumplex quadrant colours into Quasar's brand palette."""
+    app.colors(
+        high_energy_unpleasant="#783020",
+        high_energy_pleasant="#e0c080",
+        low_energy_unpleasant="#98a8c0",
+        low_energy_pleasant="#a0a888",
+    )
+```
+
+Called from `app.py`'s trailing frontend block, before page registration, so
+the final ordering is theme → pages → mount:
+
+```python
+frontend.configure_theme()
+frontend.create_pages()
+ui.run_with(app, mount_path="/", storage_secret=STORAGE_SECRET)
+```
+
+Custom (non-Quasar) keyword arguments to `app.colors()` are carried through
+to the rendered page as entries of `vue_config`'s `brand` object, with `_`
+normalized to `-` in the key — so `high_energy_unpleasant=...` surfaces as
+`"high-energy-unpleasant"`, which is the form the tests assert on. Verified
+empirically by `requirement-specialist` when the tests were written (see the
+module docstring of `tests/test_frontend.py`); no need to re-check. Note for
+FE-3/FE-4/FE-9: they reference these colours by name; which spelling Quasar
+wants at the *use* site (`ui.button(color=...)` etc.) is theirs to settle,
+not settled here.
+
+**Traceability:** FE-2 → `frontend.configure_theme()` in
+`backend/app/frontend/__init__.py`, invoked from `app.py`'s frontend block;
+verified by `backend/app/tests/test_frontend.py`'s four
+`test_brand_palette_defines_*` tests (plain `client` fixture, per the FE-1
+testing policy — the palette is server-rendered into `GET /`, so no NiceGUI
+fixture is needed or permitted).
