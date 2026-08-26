@@ -17,7 +17,7 @@ This package is a pure HTTP client of the REST API defined in ``app.py``
 from nicegui import app
 
 from . import auth as auth_pages
-from . import mood_pad
+from . import history, mood_pad
 
 
 def configure_theme() -> None:
@@ -34,3 +34,4 @@ def create_pages() -> None:
     """Register every NiceGUI page."""
     mood_pad.create()
     auth_pages.create()
+    history.create()

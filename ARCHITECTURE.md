@@ -1271,3 +1271,327 @@ recorded in the commit message):
 6. *Key repeat* — logged in, hold Enter for ~2 seconds, then count the
    notifications and the moods added by `GET /users/{username}/moods`.
    Record the count whatever it is; see the open UX detail above.
+
+### FE-7 — The mood history page at `/history`
+
+No new component. New file **`backend/app/frontend/history.py`** — the third
+per-module page file, after FE-3a's `frontend/auth.py` and FE-4's
+`frontend/mood_pad.py`, with the same `create() -> None` shape.
+`frontend/__init__.py` gains `from . import history` and one call in
+`create_pages()`; `frontend/mood_pad.py` gains exactly one line; `app.py`,
+`frontend/api.py` and `pyproject.toml` are untouched.
+
+```python
+def create_pages() -> None:
+    """Register every NiceGUI page."""
+    mood_pad.create()
+    auth_pages.create()
+    history.create()
+```
+
+#### The pure function (the one unit-tested thing)
+
+```python
+def quadrant_label(energy: float, valence: float) -> str:
+    """Name the circumplex quadrant an ``(energy, valence)`` pair falls in."""
+    if abs(energy) < 0.1 and abs(valence) < 0.1:
+        return "Neutral"
+    elif energy > 0 and valence > 0:
+        return "High Energy Pleasant"
+    elif energy > 0 and valence < 0:
+        return "High Energy Unpleasant"
+    elif energy < 0 and valence > 0:
+        return "Low Energy Pleasant"
+    else:
+        return "Low Energy Unpleasant"
+```
+
+This is `analytics.get_mood_quadrant_name` **branch for branch**, differing
+only in the returned strings (Title Case with spaces instead of snake_case).
+Read from `backend/app/analytics.py:214-234`, not recalled. Load-bearing,
+each point pinned by a test in `tests/test_history.py`:
+
+- **Parameter order is `(energy, valence)`** — energy first, matching
+  `analytics`, `MoodModel`, `schemas` and `_readout`, and matching the tests'
+  positional calls. Note this is the *opposite* of `mood_pad.pixel_to_mood` /
+  `nudge`, which are valence-first (FE-4 explains why that asymmetry exists);
+  `history.py` never touches those, so nothing here has to reconcile them —
+  but do not "harmonize" this signature to match them.
+- **`<`, not `<=`, on the neutral band.** `(0.09, 0.09)` is Neutral;
+  `(0.1, 0.1)` is High Energy Pleasant and `(-0.1, -0.1)` is Low Energy
+  Unpleasant. `abs(0.1) < 0.1` is `False` because both sides are the same
+  float, so no epsilon fudge is needed or wanted.
+- **Both axes must be inside the band for Neutral** — `(0.1, 0.0)` is not
+  Neutral, because the `and` fails on energy.
+- **The final `else` is a catch-all, not a genuine low/unpleasant test.**
+  `(0.5, 0.0)` — high energy, exactly zero valence — misses all three strict
+  inequalities and returns "Low Energy Unpleasant". That is a quirk of the
+  source; `test_a_point_on_the_valence_axis_falls_through_to_low_energy_unpleasant`
+  pins it deliberately. Replicating "exactly" means replicating this too. Do
+  not add a `valence == 0` branch to make it "correct" — that is a change to
+  `analytics.get_mood_quadrant_name`'s behavior and would need its own
+  requirement, applied to both copies.
+
+**Knowingly accepted duplication, and the one maintenance rule it carries.**
+This is the sanctioned local-re-derivation exception in the Boundaries
+section — `frontend/` must not import `analytics`, and round-tripping to the
+API for a label it can compute from data it already holds would be worse.
+The cost is a second copy of the classification: **if the thresholds or
+branch order in `analytics.get_mood_quadrant_name` ever change, this function
+changes in the same commit.** Flagging it here rather than letting a future
+reader discover two disagreeing classifiers.
+
+#### The page, literally
+
+Module constants, so the three fixed strings have one definition each:
+
+```python
+EMPTY_PROMPT = "No mood entries yet. Click on the mood board to record your first mood!"
+LOGIN_PROMPT = "Please log in to view your mood history."
+GENERIC_FAILURE = "Could not complete the request."
+HISTORY_LIMIT = 10
+
+_COLUMNS = [
+    {"name": "timestamp", "label": "Timestamp", "field": "timestamp", "align": "left"},
+    {"name": "energy", "label": "Energy", "field": "energy", "align": "left"},
+    {"name": "valence", "label": "Valence", "field": "valence", "align": "left"},
+    {"name": "quadrant", "label": "Quadrant", "field": "quadrant", "align": "left"},
+    {"name": "notes", "label": "Notes", "field": "notes", "align": "left"},
+]
+```
+
+Two pure row helpers, kept out of the page body because they build data, not
+elements:
+
+```python
+def _format_timestamp(raw: str) -> str:
+    """Render a MoodResponse's naive-UTC ISO timestamp as ``%Y-%m-%d %H:%M UTC``."""
+    return datetime.fromisoformat(raw).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _history_row(mood: dict) -> dict:
+    """Turn one MoodResponse JSON object into one ui.table row."""
+    energy = mood["energy"]
+    valence = mood["valence"]
+    return {
+        "id": mood["id"],
+        "timestamp": _format_timestamp(mood["timestamp"]),
+        "energy": f"{energy:.2f}",
+        "valence": f"{valence:.2f}",
+        "quadrant": quadrant_label(energy, valence),
+        "notes": mood.get("notes") or "",
+    }
+```
+
+and the page itself (`from datetime import datetime`, `from nicegui import
+app, ui`, `from . import api`):
+
+```python
+def create() -> None:
+    """Register the /history page."""
+
+    @ui.page("/history", title="Mood history")
+    async def history() -> None:
+        username = app.storage.user.get("username")
+        token = app.storage.user.get("token")
+        if not username or not token:
+            ui.label(EMPTY_PROMPT)
+            return
+
+        async with api.client() as http:
+            response = await http.get(
+                f"/users/{username}/moods",
+                params={"limit": HISTORY_LIMIT},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if response.status_code == 200:
+            moods = response.json()
+            if moods:
+                ui.table(columns=_COLUMNS, rows=[_history_row(m) for m in moods], row_key="id")
+            else:
+                ui.label(EMPTY_PROMPT)
+        elif response.status_code == 401:
+            ui.label(LOGIN_PROMPT)
+            ui.navigate.to("/login")
+        else:
+            ui.label(GENERIC_FAILURE)
+```
+
+Load-bearing details:
+
+- **`async def` page function, and it is genuinely supported** — but not the
+  way the sync pages are. `page._wrap`'s `decorated`
+  (`nicegui/page.py:163-219`, 3.16.0, read not recalled) calls the page
+  function, sees an awaitable, and runs it in a **background task** wrapped in
+  `with client:`, racing it against the client's connection wait with
+  `timeout=self.response_timeout` (**3.0 s** by default). Two consequences
+  that matter here. (1) The elements built inside the coroutine *are* in the
+  server-delivered HTML, because the task finishes long before the timeout and
+  `client.build_response` runs after `asyncio.wait` returns — which is what
+  makes `test_history_page_shows_the_empty_prompt_when_logged_out` a
+  meaningful assertion. (2) If the fetch ever became slow, NiceGUI would serve
+  a 500 "took longer than response_timeout" page instead. The in-process
+  ASGI call is sub-millisecond and `GET /users/{username}/moods` is a **sync**
+  `def` endpoint (FastAPI runs it in the threadpool, so it cannot block the
+  loop), so 3 s is ample. If a later item needs a slow page fetch, the escape
+  hatch is `await ui.context.client.connected()` before the slow work, **not**
+  raising `response_timeout`.
+- **Read `app.storage.user` before the first `await`.** `app.storage.user`
+  resolves through `storage.request_contextvar`, set by NiceGUI's
+  `RequestTrackingMiddleware` (`nicegui/storage.py:31-50`). That middleware is
+  installed on `core.app` — the *mounted sub-app* — not on the parent FastAPI
+  instance (`ui_run_with.py:106` → `set_storage_secret(..., parent_app=app)`,
+  which appends it to `core.app.user_middleware`), and `/users/...` matches a
+  parent route registered before the mount, so the in-process call does not
+  re-enter it and cannot clobber the contextvar. Reading first is nonetheless
+  the rule: `httpx.ASGITransport` awaits the app *inline in this task*, so any
+  future middleware change that did set the contextvar would silently
+  repoint `app.storage.user` mid-page. FE-5's `log_mood()` already reads first
+  for the same reason.
+- **Logged-out short-circuit renders the empty prompt and returns**, before
+  any request is built — same reasoning as FE-5's: `f"/users/{None}/moods"` is
+  a wrong URL and `f"/users//moods"` matches no route. The requirement
+  independently mandates that a logged-out visitor and a zero-mood logged-in
+  user see the *same* string, so `EMPTY_PROMPT` has exactly one definition and
+  two call sites.
+- **No auth guard, and `ui.navigate.to` is not one here either.** `/history`
+  returns 200 to a logged-out visitor and renders the prompt; the 401 branch
+  renders `LOGIN_PROMPT` and *then* navigates. Enqueued during page build with
+  no socket yet, the `open` message sits in `Outbox.messages` until
+  `has_socket_connection` becomes true (`nicegui/outbox.py:95-125`) and fires
+  right after load — so the message is briefly visible before the redirect,
+  which is exactly the intent. Nothing is being withheld, so FE-3b's
+  `RedirectResponse` forward pointer is still **not** triggered and stays open.
+- **Inline `ui.label`s, not `ui.notify`, for both failure branches** — the
+  row's instruction, and correct as written: a page *load* has no click to
+  attach a toast to, a toast auto-dismisses (so a user landing on a blank page
+  would have no idea why), and on the 401 branch the navigation would race the
+  toast off-screen. Not a deviation; recording the reasoning because FE-3b and
+  FE-5 use `ui.notify` for the same status codes and the difference is
+  deliberate.
+- **Status code first, body never** (FE-3b's rule, third application): 200 →
+  401 → `else`. The `else` absorbs 403, 404, 422, every 5xx and the
+  synthesized 500 from `api.client()`'s `raise_app_exceptions=False`. The raw
+  response body must never reach the page.
+- **Newest-first is the API's order, preserved by not touching it.**
+  `get_moods` (`app.py:329-331`) already does
+  `.order_by(MoodModel.timestamp.desc()).offset(skip).limit(limit)`, so rows
+  are built in iteration order and never re-sorted. Correspondingly the
+  columns are declared **explicitly and without `sortable`**: passing
+  `columns=None` would make NiceGUI auto-generate `{'sortable': True}` for
+  every key (`nicegui/elements/table.py:65-67`), handing the user a way to
+  break the pinned ordering, and would label the columns `TIMESTAMP` /
+  `ENERGY` in caps. `align: "left"` is cosmetic (Quasar right-aligns
+  non-first columns by default, which reads badly for these formatted
+  strings). `pagination` is left unset — 10 rows, so `hide-pagination` is
+  right.
+- **`row_key="id"` needs `"id"` in every row**, hence the mood's own `id`
+  being carried into the row dict even though no column displays it. It is
+  the natural stable key and it is already unique per mood.
+- **Formatting is done server-side into strings**, not left as floats with a
+  Quasar `:format`: `{value:.2f}` matches `mood_pad._readout`'s style, and
+  `%Y-%m-%d %H:%M UTC` is correct because `MoodModel.timestamp` is a naive
+  UTC `DateTime` and there is no reliable client timezone. Consequence worth
+  knowing: `datetime.fromisoformat` would happily parse an offset-bearing
+  string and `strftime` would then print that offset's wall time labelled
+  "UTC" — not reachable today (the column is naive), but it is why this must
+  not be "improved" into a general timestamp formatter without revisiting.
+- **`params={"limit": HISTORY_LIMIT}`**, not a hand-built query string —
+  httpx encodes it. The `username` in the path stays un-encoded, matching
+  FE-5's `f"/users/{username}/moods"`; that is pre-existing and out of scope
+  here, not an endorsement.
+
+#### `api.client()` is unchanged — and this is the *second* authenticated
+call site, not the third
+
+FE-5's forward pointer says to revisit the `Authorization`-header shape "when
+a third authenticated call site lands (FE-7/FE-8/FE-9)". FE-7 is the second
+(FE-5's `log_mood()` is the first), so the trigger is **not** met: headers
+stay per-request, `api.client()` keeps its no-argument signature, and no
+`api.auth_headers()` / `api.client(token=...)` helper is introduced. Extract
+at FE-8 or FE-9, with three real usages to design against. Per FE-3b, the
+stored token carries no `token_type` prefix, so this handler writes
+`f"Bearer {token}"` itself.
+
+#### The one-line change to `frontend/mood_pad.py`
+
+```python
+        ui.button("Log this mood", color="high-energy-pleasant", on_click=log_mood)
+        ui.link("History", "/history")
+```
+
+Appended as the **last statement of `index()`**, after the button. Any
+position satisfies `test_root_page_links_to_history` (`_has_props` scans all
+elements), so this is a placement call: appending leaves FE-4/FE-5/FE-6's
+pad → readout → button construction order byte-identical, which keeps their
+render-order-sensitive assertions untouched, and it reads as a footer nav
+below the primary action. It must be `ui.link` — `ui.button(on_click=lambda:
+ui.navigate.to(...))` renders no `href` prop and fails the test (FE-3a's
+finding, third time it applies). Nothing else in `mood_pad.py` changes.
+
+Out of scope, deliberately: journal entries (FE-8's own page); any back-link
+from `/history` to `/` (not in the requirement — do not invent one);
+pagination, filtering, sorting or a configurable limit; editing or deleting a
+mood from the table; any auth guard on any page; a "logged in as…" indicator;
+any change to `frontend/api.py`, `app.py`, `analytics.py` or the REST layer.
+
+**Traceability:** FE-7 → `frontend.history.quadrant_label()` plus
+`frontend.history.create()`'s `/history` page in
+`backend/app/frontend/history.py`, registered from `frontend.create_pages()`
+in `backend/app/frontend/__init__.py`, plus the single
+`ui.link("History", "/history")` in `frontend.mood_pad.create()`'s `index()`.
+Split in two, the same shape as FE-4/FE-5/FE-6a.
+
+**Automated slice** — 13 tests, all with the plain `client` fixture or no
+fixture at all, per the FE-1 Testing policy:
+
+- `backend/app/tests/test_history.py` — 10 unit tests on `quadrant_label`
+  alone: one per quadrant well outside the band (4), the origin, just-inside
+  `(0.09, 0.09)`, the `±0.1` boundary in both directions, one-axis-only at the
+  boundary, and the catch-all `else` at `(0.5, 0.0)`. No fixture, no HTTP.
+- `backend/app/tests/test_frontend.py` — `test_history_page_is_served_without_an_auth_guard`
+  (`GET /history` with `follow_redirects=False` → 200, i.e. no guard),
+  `test_history_page_shows_the_empty_prompt_when_logged_out` (the exact
+  `EMPTY_PROMPT` string is in the server-rendered HTML — this is the one test
+  that proves the async page body's elements survive into the response), and
+  `test_root_page_links_to_history` (an element on `/` carries
+  `href="/history"`).
+
+Nothing else in FE-7 is TestClient-reachable: `app.storage.user` cannot be
+seeded over HTTP, so no automated test can reach the authenticated branch,
+and `GET /users/{username}/moods` itself is already covered by
+`tests/test_moods.py` — do not re-test it through the UI. (Caveat for anyone
+adding tests later: `test_frontend.py`'s `_rendered_props` brace-depth parser
+would mis-parse a populated table only if a mood's `notes` contained a literal
+`{` or `}`; that path is unreachable from the `client` fixture, so it is a
+note, not a constraint on this design.)
+
+**Manual slice** (dev server from `backend/app/`, per the Testing policy; all
+five required, result recorded in the commit message):
+
+1. *Populated table* — logged in with at least three moods logged from `/`,
+   open `/history` and confirm a table with the five columns Timestamp /
+   Energy / Valence / Quadrant / Notes; the newest mood is the **top** row;
+   timestamps read `2026-08-27 14:05 UTC`; Energy and Valence show two
+   decimals; the Quadrant of an obviously top-right mood reads "High Energy
+   Pleasant" and a centred one reads "Neutral"; a mood with no note shows a
+   blank Notes cell rather than "None". Check the Energy/Valence pair is not
+   swapped against what the pad's readout showed when it was logged.
+2. *Limit* — with more than ten moods logged, confirm exactly ten rows.
+3. *Zero moods but logged in* — register a fresh user, log in, go straight to
+   `/history` and confirm the same string as the logged-out case, "No mood
+   entries yet. Click on the mood board to record your first mood!", and **no**
+   table.
+4. *401 branch* — edit `token` in `backend/app/.nicegui/storage-user-*.json`
+   to a garbage string, load `/history`, and confirm the page shows "Please
+   log in to view your mood history." and then navigates to `/login` (the
+   message is briefly visible first — that is expected, see the bullet above).
+5. *Generic failure branch* — set `username` in that same storage file to
+   another existing user, making the API answer 403, and confirm the page
+   shows exactly "Could not complete the request." with no response body, no
+   traceback and no navigation.
+
+Also worth eyeballing during step 1: the `ui.link("History", "/history")` on
+`/` and that following it does not disturb the pad (a full page load, so the
+marker resets to centre — expected).

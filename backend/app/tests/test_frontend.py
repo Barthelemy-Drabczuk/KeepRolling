@@ -507,3 +507,54 @@ def test_confirm_button_is_enabled_at_initial_render(client) -> None:
 def test_mood_pad_is_keyboard_focusable(client) -> None:
     """The pad renders with tabindex="0", so it can take keyboard focus."""
     assert _pad_props(client).get("tabindex") == "0"
+
+
+# --- FE-7: the history page's logged-out render, and its link from / ---------
+#
+# Only two things about FE-7 are server-observable, and only those are
+# tested here:
+#
+#   1. /history is unguarded (D1 resolved to "no guard", consistent with
+#      /, /login and /register) and, to a logged-out visitor, renders the
+#      empty-state prompt instead of a table.
+#   2. / carries a `ui.link("History", "/history")` so the page is
+#      reachable.
+#
+# Everything FE-7 specifies behind an authenticated fetch -- the
+# populated table and its four columns, the newest-first ordering, the
+# timestamp/2-decimal formatting, the zero-mood-but-logged-in empty
+# state, and both the 401 and generic-failure branches -- depends on
+# `app.storage.user["token"]`, which cannot be seeded over HTTP. Per
+# ARCHITECTURE.md's Testing policy that is manual-verification-only, and
+# nicegui.testing's `user`/`Screen` fixtures are not used to reach it.
+# The `quadrant_label` arithmetic those rows depend on is covered as a
+# plain unit test in tests/test_history.py; nothing here re-tests it
+# through the frontend.
+#
+# The status test passes `follow_redirects=False` deliberately.
+# TestClient follows redirects by default, so a plain
+# `client.get("/history").status_code == 200` would also pass against an
+# auth guard that 307s a logged-out visitor to /login -- i.e. it would
+# pass under *either* resolution of D1 and pin nothing. Asserting on the
+# unfollowed response is what makes "no guard" testable.
+
+HISTORY_EMPTY_PROMPT = "No mood entries yet. Click on the mood board to record your first mood!"
+
+
+def test_history_page_is_served_without_an_auth_guard(client) -> None:
+    """GET /history returns 200 to a logged-out visitor rather than redirecting to /login."""
+    response = client.get("/history", follow_redirects=False)
+
+    assert response.status_code == 200
+
+
+def test_history_page_shows_the_empty_prompt_when_logged_out(client) -> None:
+    """A logged-out visitor to /history sees FE-7's empty-state prompt, not a table."""
+    response = client.get("/history", follow_redirects=False)
+
+    assert HISTORY_EMPTY_PROMPT in response.text
+
+
+def test_root_page_links_to_history(client) -> None:
+    """The pad page links across to /history, making the history page reachable."""
+    assert _has_props(client, "/", href="/history")

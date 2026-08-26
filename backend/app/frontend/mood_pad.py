@@ -168,3 +168,4 @@ def create() -> None:
                 ui.notify("Could not complete the request.")
 
         ui.button("Log this mood", color="high-energy-pleasant", on_click=log_mood)
+        ui.link("History", "/history")
