@@ -1,4 +1,4 @@
-"""Tests for the NiceGUI frontend mounted onto the FastAPI app (FE-1, FE-2, FE-3a, FE-4)."""
+"""Tests for the NiceGUI frontend mounted onto the FastAPI app (FE-1, FE-2, FE-3a, FE-4, FE-5)."""
 
 import html
 import json
@@ -435,3 +435,52 @@ def test_mood_pad_marker_starts_at_the_pad_centre(client) -> None:
 def test_root_page_renders_the_initial_mood_readout(client) -> None:
     """A readout label on / starts at the origin mood, "Energy: 0.00 · Valence: 0.00"."""
     assert "Energy: 0.00 · Valence: 0.00" in _rendered_texts(client, "/")
+
+
+# --- FE-5: the confirm button's initial render at / --------------------------
+#
+# Only the button's *initial render* is server-observable, so only that is
+# tested here. Everything else FE-5 specifies -- the click handler, the
+# authenticated POST /users/{username}/moods, the 201/401/other branches, the
+# live readout updates and the marker reset -- is dispatched over NiceGUI's
+# websocket after the page is served, is unreachable through TestClient, and
+# is manual-verification-only per ARCHITECTURE.md's Testing policy. Per that
+# same policy nicegui.testing's `user`/`Screen` fixtures are not used to reach
+# it either.
+#
+# The endpoint the handler will call is already covered below the UI in
+# tests/test_moods.py (REQ-MOOD-1/2/5); FE-5 must not re-test it through the
+# frontend.
+
+CONFIRM_CAPTION = "Log this mood"
+
+
+def _confirm_button_props(client: TestClient) -> dict:
+    """Return the rendered ``props`` of /'s confirm button, by its caption."""
+    matches = [
+        props for props in _rendered_props(client, "/") if props.get("label") == CONFIRM_CAPTION
+    ]
+    assert matches, f"GET / rendered no element labelled {CONFIRM_CAPTION!r}"
+
+    return matches[0]
+
+
+def test_root_page_renders_the_confirm_button(client) -> None:
+    """GET / renders a button captioned "Log this mood" below the pad's readout."""
+    assert _has_props(client, "/", label=CONFIRM_CAPTION)
+
+
+def test_confirm_button_uses_high_energy_pleasant(client) -> None:
+    """The confirm button is coloured with FE-2's high-energy/pleasant brand slot."""
+    assert _has_props(client, "/", label=CONFIRM_CAPTION, color="high-energy-pleasant")
+
+
+def test_confirm_button_is_enabled_at_initial_render(client) -> None:
+    """The confirm button is live from page load: the untouched marker is already a valid mood.
+
+    NiceGUI writes ``_props['disable'] = not enabled`` only via
+    DisableableElement._handle_enabled_change, and an enabled button renders no
+    ``disable`` key at all -- so "not disabled" is `disable` being absent or
+    false, never `disable is False`.
+    """
+    assert _confirm_button_props(client).get("disable") is not True

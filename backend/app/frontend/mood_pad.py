@@ -9,7 +9,9 @@ why cross=False (avoids colliding with the mousemove already in
 events).
 """
 
-from nicegui import events, ui
+from nicegui import app, events, ui
+
+from . import api
 
 PAD_WIDTH = 400
 PAD_HEIGHT = 400
@@ -78,6 +80,14 @@ def create() -> None:
     @ui.page("/", title="Moodometer")
     def index() -> None:
         dragging = False
+        current_valence = 0.0
+        current_energy = 0.0
+
+        def set_mood(valence: float, energy: float) -> None:
+            nonlocal current_valence, current_energy
+            current_valence, current_energy = valence, energy
+            pad.content = _pad_svg(*_mood_to_pixel(valence, energy, PAD_WIDTH, PAD_HEIGHT))
+            readout.text = _readout(energy, valence)
 
         def handle_mouse(event: events.MouseEventArguments) -> None:
             nonlocal dragging
@@ -88,8 +98,7 @@ def create() -> None:
                 return
             elif not dragging:
                 return
-            valence, energy = pixel_to_mood(event.image_x, event.image_y, PAD_WIDTH, PAD_HEIGHT)
-            pad.content = _pad_svg(*_mood_to_pixel(valence, energy, PAD_WIDTH, PAD_HEIGHT))
+            set_mood(*pixel_to_mood(event.image_x, event.image_y, PAD_WIDTH, PAD_HEIGHT))
 
         pad = ui.interactive_image(
             size=(PAD_WIDTH, PAD_HEIGHT),
@@ -98,4 +107,32 @@ def create() -> None:
             content=_pad_svg(*_mood_to_pixel(0.0, 0.0, PAD_WIDTH, PAD_HEIGHT)),
             on_mouse=handle_mouse,
         )
-        ui.label(_readout(0.0, 0.0))
+        readout = ui.label(_readout(0.0, 0.0))
+
+        async def log_mood() -> None:
+            username = app.storage.user.get("username")
+            token = app.storage.user.get("token")
+            if not username or not token:
+                # Nothing stored: same user-visible outcome as the API's 401, but
+                # short-circuited here because f"/users/{None}/moods" would be a
+                # wrong URL and f"/users//moods" matches no route (Starlette's
+                # {username} is [^/]+), so either would 404 into the generic branch.
+                ui.notify("Please log in to record a mood.")
+                ui.navigate.to("/login")
+                return
+            async with api.client() as http:
+                response = await http.post(
+                    f"/users/{username}/moods",
+                    json={"energy": current_energy, "valence": current_valence},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if response.status_code == 201:
+                ui.notify("Mood logged!")
+                set_mood(0.0, 0.0)
+            elif response.status_code == 401:
+                ui.notify("Please log in to record a mood.")
+                ui.navigate.to("/login")
+            else:
+                ui.notify("Could not complete the request.")
+
+        ui.button("Log this mood", color="high-energy-pleasant", on_click=log_mood)

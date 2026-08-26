@@ -753,3 +753,185 @@ Testing policy above: with the dev server running from `backend/app/`, press
 and drag on the pad and confirm the marker follows the cursor, stops at the
 edge rather than leaving the pad, and does not move when the button is up —
 record the result in the commit message.
+
+### FE-5 — Confirm button: log the current mood via `POST /moods`
+
+No new component and no new file. Everything lands inside
+`backend/app/frontend/mood_pad.py`'s existing `create()` → `index()` page
+closure (FE-4), which gains local state, one extra closure, a rewritten tail
+of `handle_mouse`, an async click handler and the button itself. The module's
+imports become `from nicegui import app, events, ui` plus `from . import api`
+— the same pair `frontend/auth.py` already uses, and with the same absence of
+a name collision (the backend FastAPI instance is never bound in this module;
+`api.client()` reaches it lazily).
+
+#### Decision 1 — current mood lives in two `nonlocal` floats beside `dragging`
+
+`index()` gains `current_valence = 0.0` and `current_energy = 0.0` next to
+FE-4's `dragging = False`, in that order (matching `pixel_to_mood`'s return
+order, so `set_mood(*pixel_to_mood(...))` is safe). Rejected alternatives:
+`app.storage.user` (this is per-tab UI state, not session state, and writing
+it would put an unsubmitted mood in the cookie-backed store), a module-level
+global (one process serves every client — it would leak one user's pad
+position into another's), and `pad.content`-as-source-of-truth (re-parsing an
+SVG string to recover two floats).
+
+**State and rendering are updated together, through one closure**, so the
+label, the marker and the two floats can never drift apart:
+
+```python
+def set_mood(valence: float, energy: float) -> None:
+    nonlocal current_valence, current_energy
+    current_valence, current_energy = valence, energy
+    pad.content = _pad_svg(*_mood_to_pixel(valence, energy, PAD_WIDTH, PAD_HEIGHT))
+    readout.text = _readout(energy, valence)
+```
+
+Note the argument-order flip on the last line: `_readout` is energy-first,
+everything else here is valence-first (FE-4's entry explains why that
+asymmetry exists and why it must not be "fixed"). `set_mood` has two call
+sites in FE-5 — the drag handler and the post-201 reset — which is what earns
+it over inlining. FE-6's arrow-key nudge will be the third.
+
+FE-4's `handle_mouse` keeps its `dragging` guard verbatim; only its last two
+lines change, from assigning `pad.content` directly to:
+
+```python
+            set_mood(*pixel_to_mood(event.image_x, event.image_y, PAD_WIDTH, PAD_HEIGHT))
+```
+
+That single line is what makes the readout live during a drag — the behavior
+FE-4's row deferred here. `readout` therefore becomes a named handle
+(`readout = ui.label(_readout(0.0, 0.0))`); it is read by `set_mood`, so no
+ruff `F841`. The initial render still builds `content` / label text inline
+from `_pad_svg`/`_readout`, because `set_mood` cannot run before `pad` and
+`readout` exist.
+
+#### Decision 2 — headers go on the request, `api.client()` is untouched
+
+`api.client()` keeps its no-argument signature; the `Authorization` header is
+passed to the individual call: `http.post(url, json=..., headers={...})`.
+FE-5 is the only authenticated call site that exists today, and FE-7–10 are
+undesigned — an `api.client(token=...)` parameter or an `api.auth_headers()`
+helper now would be a guess at their shape. httpx merges per-request headers
+over client defaults, so nothing is lost by deferring. **Forward pointer:**
+when a third authenticated call site lands (FE-7/FE-8/FE-9), revisit this and
+extract *then*, with three real usages to design against.
+
+Per FE-3b's forward pointer, the stored token carries no `token_type` prefix,
+so the handler writes `f"Bearer {token}"` itself.
+
+#### The click handler, literally
+
+```python
+async def log_mood() -> None:
+    username = app.storage.user.get("username")
+    token = app.storage.user.get("token")
+    if not username or not token:
+        # Nothing stored: same user-visible outcome as the API's 401, but
+        # short-circuited here because f"/users/{None}/moods" would be a
+        # wrong URL and f"/users//moods" matches no route (Starlette's
+        # {username} is [^/]+), so either would 404 into the generic branch.
+        ui.notify("Please log in to record a mood.")
+        ui.navigate.to("/login")
+        return
+    async with api.client() as http:
+        response = await http.post(
+            f"/users/{username}/moods",
+            json={"energy": current_energy, "valence": current_valence},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if response.status_code == 201:
+        ui.notify("Mood logged!")
+        set_mood(0.0, 0.0)
+    elif response.status_code == 401:
+        ui.notify("Please log in to record a mood.")
+        ui.navigate.to("/login")
+    else:
+        ui.notify("Could not complete the request.")
+
+
+ui.button("Log this mood", color="high-energy-pleasant", on_click=log_mood)
+```
+
+placed immediately after `readout = ui.label(...)`, so it renders below the
+readout as the row specifies. Load-bearing details:
+
+- **`async def` + `await`**, per FE-3b: a synchronous HTTP call here would
+  block the shared event loop and freeze every connected client.
+- **No `enabled=`/`.disable()` anywhere.** NiceGUI writes
+  `_props["disable"]` only when a `DisableableElement` is actually disabled,
+  so an enabled button renders *no* `disable` key —
+  `test_confirm_button_is_enabled_at_initial_render` asserts
+  `props.get("disable") is not True`, which the plain constructor satisfies.
+  Do not add `enabled=True` "for clarity"; it changes nothing and invites
+  someone to later add a gate the requirement explicitly rejects.
+- **`color="high-energy-pleasant"`, hyphenated**, per FE-3a: only names in
+  NiceGUI's `QUASAR_COLORS` become the `color` prop; an underscored name
+  silently degrades to an inline style and the test sees nothing.
+- **Body is `{"energy", "valence"}` only** — no `notes`, no `timestamp`.
+  `schemas.MoodCreate` makes both optional and REQ-MOOD-2 defaults the
+  timestamp server-side. Energy first in the dict is cosmetic (JSON is
+  unordered); the *values* being correctly paired is not — read them from
+  `current_energy` / `current_valence` by name, never by unpacking a tuple.
+- **Status code first, body never** (FE-3b's rule): 201 → 401 → `else`. The
+  `else` absorbs 403, 422 and every 5xx, including the synthesized 500 that
+  `api.client()`'s `raise_app_exceptions=False` produces.
+- **The 401 branch's `ui.navigate.to("/login")` is post-action navigation,
+  not an auth guard**, so it does not trigger FE-3b's `RedirectResponse`
+  forward pointer. **`/` gains no auth guard in FE-5** — deliberate, and
+  load-bearing: ~25 existing tests fetch `/` with a logged-out `client`
+  fixture and expect 200.
+- **Reset on success reuses `set_mood(0.0, 0.0)`**, which routes through
+  `_mood_to_pixel`/`_pad_svg`/`_readout` — the marker and readout are never
+  re-derived by hand or by string-patching `pad.content`.
+
+The logged-out early return is FE-5's one design call beyond the row's text:
+the row enumerates 201/401/else and names "missing token" as a 401 case, but
+a *missing username* is a malformed URL rather than a 401 response, so it is
+mapped onto the same user-visible outcome before the request is built.
+
+Out of scope, deliberately: keyboard nudging and Enter-to-submit (FE-6);
+`notes` on the mood; disabling the button while the request is in flight;
+any auth guard on `/`; any change to `frontend/api.py`, `frontend/__init__.py`
+or `app.py`.
+
+**Traceability:** FE-5 → the `set_mood()` / `log_mood()` closures and the
+`ui.button("Log this mood", ...)` inside `frontend.mood_pad.create()`'s
+`index()` page in `backend/app/frontend/mood_pad.py`. Split in two, the same
+shape as FE-4. **Automated slice** (plain `client` fixture, initial render
+only): the three FE-5 tests in `backend/app/tests/test_frontend.py` —
+`test_root_page_renders_the_confirm_button` (a rendered element is labelled
+"Log this mood"), `test_confirm_button_uses_high_energy_pleasant` (that same
+element carries `color="high-energy-pleasant"`), and
+`test_confirm_button_is_enabled_at_initial_render` (it renders no
+`disable: true`). Nothing else in FE-5 is TestClient-reachable, and the
+endpoint underneath is already covered by `tests/test_moods.py`
+(REQ-MOOD-1/2/5) — do not re-test it through the UI. **Manual slice** (dev
+server from `backend/app/`, per the Testing policy; all six required, result
+recorded in the commit message):
+
+1. *Live readout* — drag on the pad and confirm the label under it updates
+   continuously with the marker, ending on the values the marker's quadrant
+   implies (top-right → both positive), and that it still reads
+   `Energy: 0.00 · Valence: 0.00` before the first drag.
+2. *Log success* — logged in, drag to a distinctive off-centre point, click
+   "Log this mood", confirm the notification "Mood logged!" and that the
+   marker and readout snap back to the centre / `0.00`.
+3. *Persisted correctly* — after step 2, `GET /users/{username}/moods` (curl
+   with the same bearer token, or `/docs`) returns a mood whose `energy` and
+   `valence` match the readout as it stood at click time, **not** swapped.
+   This is the one step that catches a valence/energy flip, which no other
+   check here would.
+4. *Logged out* — in a fresh private window (no `app.storage.user` entries),
+   click the button without logging in and confirm the notification "Please
+   log in to record a mood." and navigation to `/login`.
+5. *Expired/invalid token* — edit `token` in
+   `backend/app/.nicegui/storage-user-*.json` to a garbage string, reload
+   `/`, click, and confirm the same 401 notification and redirect (this
+   exercises the real response branch, where step 4 exercises the
+   short-circuit).
+6. *Generic failure* — force a non-401 failure (e.g. set `username` in that
+   same storage file to another existing user, making the API answer 403) and
+   confirm the notification is exactly "Could not complete the request." with
+   no response body, no traceback, and no navigation.
