@@ -41,6 +41,15 @@ and `User.py` are dead code and are not part of any boundary here.
 - **No NiceGUI test fixtures.** `nicegui.testing.user` and
   `nicegui.testing.Screen` must not be used anywhere in this repo. See the
   FE-1 "Testing policy" subsection for the finding and what to do instead.
+- **`ui.navigate.to()` is navigation, never an auth guard.** It runs after
+  the page body has already rendered and been delivered, so any content the
+  page built is on the client's screen before the redirect fires. It is
+  correct for *post-action* navigation between pages that are themselves
+  public (FE-3b's "go to `/` after login", "go to `/login` after register" —
+  nothing is being withheld). The first item that must actually withhold
+  content from an unauthenticated visitor must instead return a
+  `starlette.responses.RedirectResponse` from the page function *before*
+  building any element. See FE-3b's forward pointers.
 
 ## Contracts
 
@@ -318,3 +327,201 @@ direction.
 `backend/app/frontend/auth.py`, invoked from `frontend.create_pages()`;
 verified by the twelve `test_login_page_*` / `test_register_page_*` tests in
 `backend/app/tests/test_frontend.py` (plain `client` fixture).
+
+### FE-3b — Form submission: login/register call the REST API
+
+Lands in the existing `backend/app/frontend/auth.py` (the two page
+functions FE-3a created gain local input handles and an async click
+handler), plus **one new small module, `backend/app/frontend/api.py`**,
+which owns the HTTP transport. No change to `frontend/__init__.py`,
+`app.py`, or `pyproject.toml` (`httpx>=0.27.0` is already a runtime
+dependency).
+
+#### Transport decision: in-process ASGI, not a network round-trip
+
+`frontend/` calls its own co-hosted REST API through
+`httpx.AsyncClient(transport=httpx.ASGITransport(app=<the FastAPI app>))`
+— no socket, no configurable base URL, no host/port to get wrong behind a
+proxy or in Docker. This **does not weaken the boundary**: the call still
+goes through the public REST interface (routing, Pydantic validation,
+`get_current_active_user`, the whole middleware stack), it just skips the
+loopback socket. It is also the transport `nicegui.testing.user_plugin`
+uses internally in this same dependency stack. Rejected alternative: a real
+request to the app's own host:port, which buys nothing and adds
+connection-refused/timeout/proxy failure modes that only appear in some
+deployments.
+
+**The FastAPI instance must be imported lazily, inside the call.**
+`app.py` does `import frontend` at module level (line 17), *before*
+`app = FastAPI(...)` exists, and `frontend/__init__.py` imports
+`frontend.auth`. A top-level `import app` anywhere under `frontend/` is
+therefore a circular import that fails at startup. This is the whole
+reason `api.py` exists as its own module rather than being three lines
+inlined into `auth.py`: the trap gets explained once, and FE-5/7/8/9/10 —
+which all need the same client, plus an `Authorization` header — extend
+one function instead of copy-pasting the transport five times.
+
+```python
+# backend/app/frontend/api.py
+import httpx
+
+BASE_URL = "http://moodometer.internal"  # ASGITransport ignores the host;
+                                         # httpx just requires an absolute URL
+
+
+def client() -> httpx.AsyncClient:
+    """An httpx client that dispatches straight into the FastAPI app."""
+    # Imported here, not at module scope: app.py imports `frontend` before it
+    # defines `app`, so a top-level `import app` is a circular import.
+    import app as backend
+
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=backend.app, raise_app_exceptions=False),
+        base_url=BASE_URL,
+    )
+```
+
+`raise_app_exceptions=False` is load-bearing, not a default being restated.
+With httpx's default (`True`), an *unhandled* server-side exception — a DB
+outage, say — propagates out of `await http.post(...)` into the click
+handler instead of arriving as a response, so a status-code-only error
+branch would miss it entirely and the traceback would surface to the user.
+With `False`, httpx synthesizes a `500` response (verified by reading
+`httpx/_transports/asgi.py:169-187` in `.pixi/envs/default`, not recalled),
+which falls into the generic-message branch below; Starlette's
+`ServerErrorMiddleware` still logs the traceback server-side. `HTTPException`
+raised by the endpoints (401, 400) is *handled* by FastAPI either way and
+always arrives as a normal response.
+
+#### The click handlers must be `async` and must `await` the call
+
+`ui.button(on_click=...)` accepts a coroutine function. A **synchronous**
+httpx call inside the handler would block NiceGUI's single event loop for
+its whole duration — freezing every connected client's UI, not just the one
+that pressed the button. Both handlers below are `async def` and `await`
+every HTTP call. (Related and pre-existing, not FE-3b's to fix: `POST
+/auth/login` is an `async def` endpoint that runs bcrypt verification
+synchronously, so it occupies the loop for ~100ms regardless of transport.)
+
+#### `frontend/auth.py`, literally
+
+`from nicegui import app, ui` (the module currently imports `ui` only) plus
+`from . import api`. Note there is no name collision here: the backend
+FastAPI instance is never bound in this module — `api.client()` reaches it.
+
+```python
+@ui.page("/login")
+def login() -> None:
+    username = ui.input("Username")
+    password = ui.input("Password", password=True)
+
+    async def submit() -> None:
+        async with api.client() as http:
+            response = await http.post(
+                "/auth/login",
+                data={"username": username.value, "password": password.value},
+            )
+        if response.status_code == 200:
+            app.storage.user["token"] = response.json()["access_token"]
+            app.storage.user["username"] = username.value
+            ui.navigate.to("/")
+        elif response.status_code == 401:
+            ui.notify("Incorrect username or password")
+        else:
+            ui.notify("Could not complete the request.")
+
+    ui.button("Log in", color="high-energy-pleasant", on_click=submit)
+    ui.link("Register", "/register")
+
+
+@ui.page("/register")
+def register() -> None:
+    username = ui.input(
+        "Username",
+        validation={"Username must be 3-50 characters": lambda v: 3 <= len(v or "") <= 50},
+    )
+    password = ui.input(
+        "Password",
+        password=True,
+        validation={"Password must be at least 8 characters": lambda v: len(v or "") >= 8},
+    )
+
+    async def submit() -> None:
+        username_ok = username.validate()
+        password_ok = password.validate()
+        if not (username_ok and password_ok):
+            return
+        async with api.client() as http:
+            response = await http.post(
+                "/users",
+                json={"username": username.value, "password": password.value},
+            )
+        if response.status_code == 201:
+            ui.navigate.to("/login")
+        elif response.status_code == 400:
+            ui.notify("Username already registered")
+        else:
+            ui.notify("Could not complete the request.")
+
+    ui.button("Register", color="high-energy-pleasant", on_click=submit)
+    ui.link("Log in", "/login")
+```
+
+Load-bearing details in that:
+
+- **`data=` for login, `json=` for register.** `POST /auth/login` takes an
+  `OAuth2PasswordRequestForm` — form-encoded. `POST /users` takes a
+  `UserCreate` Pydantic body — JSON. Swapping them yields a `422`, which
+  lands in the generic branch and looks exactly like a server fault, hiding
+  the actual bug.
+- **Status code first, body never.** Success (200 / 201) → the specific
+  error (401 / 400, verbatim strings from the endpoints' own `detail`) →
+  `else:` generic. The `else` catches 422, every 5xx, and the synthesized
+  500 above. The raw response body must never reach `ui.notify`:
+  REQ-USER-1's 422 detail echoes the submitted password back in `input`.
+- **Client-side length validation lives on the register `ui.input`s**, as
+  NiceGUI's `validation=` dict (`message -> predicate`), giving inline field
+  errors as the user types. It does **not** gate the button on its own —
+  `ValidationElement` auto-validates on value change but nothing blocks a
+  click — so `submit()` re-checks with explicit `.validate()` calls and
+  returns early. Both are evaluated before the `and` on purpose: `if not
+  (username.validate() and password.validate())` would short-circuit and
+  leave the password field's error message unset. Bounds mirror
+  `schemas.UserCreate` (username 3-50, password ≥8). Login gets no such
+  validation — a wrong-length password there is simply wrong credentials,
+  and the 401 path already covers it.
+- Adding `validation=` adds an `error` prop to those elements. FE-3a's
+  tests match props as a subset (`_has_props`), so they stay green.
+
+Out of scope, deliberately: logout, any `Authorization` header, any auth
+guard on any page, "already logged in" redirects, disabling the button
+while the request is in flight.
+
+#### Forward pointers (findings later items would otherwise rediscover)
+
+- **`token_type` is dropped.** Login stores the bare `access_token` string
+  in `app.storage.user["token"]`; the response's `"token_type": "bearer"`
+  is discarded. Whoever first builds an `Authorization` header (FE-5
+  onward) must write the prefix themselves —
+  `{"Authorization": f"Bearer {app.storage.user['token']}"}` — and must not
+  assume the stored value already carries it.
+- **`ui.navigate.to` is not a guard.** Its two uses here are correct
+  because `/` and `/login` are both genuinely public in FE-3b; nothing is
+  withheld, it is just post-action navigation. The first item that needs to
+  *hide* a page from an unauthenticated visitor must return a
+  `RedirectResponse` from the page body before constructing any element —
+  `ui.navigate.to` fires after the page has rendered and shipped, so the
+  protected content is already on screen. See the drift rule added to
+  "Boundaries" above.
+
+**Traceability:** FE-3b → `frontend.api.client()` in
+`backend/app/frontend/api.py` + the `submit()` click handlers inside
+`frontend.auth.create()`'s `login()` / `register()` pages in
+`backend/app/frontend/auth.py`. **No pytest test**: the behavior is
+dispatched over NiceGUI's websocket from click handlers and is unreachable
+through the `client`/`TestClient` fixture, per the FE-1 Testing policy's
+manual-verification carve-out. Verified instead by the four enumerated
+manual acceptance steps in `TASKS.md`'s FE-3b row — login-success (incl.
+inspecting `backend/app/.nicegui/storage-user-*.json` for `token` +
+`username`), register-success, login-401, register-400 — all four required,
+and the result recorded in the commit message.
