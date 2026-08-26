@@ -245,3 +245,76 @@ verified by `backend/app/tests/test_frontend.py`'s four
 `test_brand_palette_defines_*` tests (plain `client` fixture, per the FE-1
 testing policy — the palette is server-rendered into `GET /`, so no NiceGUI
 fixture is needed or permitted).
+
+### FE-3a — `/login` and `/register` page shape
+
+No new component. This is the first of the per-module page files FE-1's
+entry anticipated: new file **`backend/app/frontend/auth.py`** with
+
+```python
+def create() -> None:
+    """Register the /login and /register pages."""
+```
+
+`frontend/__init__.py` imports it (`from . import auth as auth_pages` — a
+relative import, aliased so no reader confuses it with the top-level
+backend `auth.py`; they are different module paths and neither shadows the
+other, and the boundary rules forbid `frontend/` importing the backend one
+anyway) and calls `auth_pages.create()` from `create_pages()`. `/` stays
+inline in `create_pages()`; nothing else in `__init__.py` changes.
+
+The two pages, literally — the calls are the contract, since the tests
+assert on NiceGUI's server-rendered per-element `props` objects:
+
+```python
+@ui.page("/login")
+def login() -> None:
+    ui.input("Username")
+    ui.input("Password", password=True)
+    ui.button("Log in", color="high-energy-pleasant")
+    ui.link("Register", "/register")
+
+
+@ui.page("/register")
+def register() -> None:
+    ui.input("Username")
+    ui.input("Password", password=True)
+    ui.button("Register", color="high-energy-pleasant")
+    ui.link("Log in", "/login")
+```
+
+Four things in that are load-bearing rather than taste:
+
+- **The colour name must be hyphenated at the use site.** Settling the
+  question FE-2 left open: `app.colors()` normalizes `_` → `-` and adds the
+  custom names to NiceGUI's module-global `QUASAR_COLORS`
+  (`nicegui/app/app.py:373`, 3.16.0 — read, not recalled). `ui.button`'s
+  `color=` only becomes the element's **`color` prop** for names in that
+  set; anything else silently becomes an inline
+  `style="background-color: ..."` instead. So `color="high_energy_pleasant"`
+  would render nothing the test can see, and no error either.
+- **`configure_theme()` must have run before a page renders**, for the same
+  reason. It does: `app.py` calls it at import, and page bodies build
+  elements per request — one more reason element construction stays out of
+  import time.
+- **Cross-navigation must be `ui.link`**, which is what puts `href` in
+  props. A `ui.button(on_click=lambda: ui.navigate.to(...))` renders no
+  `href`, fails the test, and would only work over the websocket, which is
+  FE-3b's half.
+- **No unused local handles** (`username = ui.input(...)`) — ruff `F841`.
+  FE-3b introduces the handles together with the handler that reads them.
+
+Link *caption* is not pinned: `ui.link`'s text renders under the element's
+`text` key, not `props`, so the tests assert `href` only. "Register" /
+"Log in" above are for consistency; nothing depends on them.
+
+Out of scope for FE-3a, deliberately: form submission, `POST /auth/...`,
+`app.storage.user`, post-login navigation (all FE-3b, manual-verified per
+the FE-1 testing policy), plus nav layout, page titles, and any styling
+beyond the button colour. No auth guard on either route in either
+direction.
+
+**Traceability:** FE-3a → `frontend.auth.create()` in
+`backend/app/frontend/auth.py`, invoked from `frontend.create_pages()`;
+verified by the twelve `test_login_page_*` / `test_register_page_*` tests in
+`backend/app/tests/test_frontend.py` (plain `client` fixture).

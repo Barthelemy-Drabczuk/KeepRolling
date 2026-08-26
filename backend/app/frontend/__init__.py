@@ -16,6 +16,8 @@ This package is a pure HTTP client of the REST API defined in ``app.py``
 
 from nicegui import app, ui
 
+from . import auth as auth_pages
+
 
 def configure_theme() -> None:
     """Bind the circumplex quadrant colours into Quasar's brand palette."""
@@ -33,3 +35,5 @@ def create_pages() -> None:
     @ui.page("/", title="Moodometer")
     def index() -> None:
         ui.label("Moodometer")
+
+    auth_pages.create()
