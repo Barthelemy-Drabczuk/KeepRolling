@@ -75,7 +75,7 @@ governance and lifecycle for requirements/design/tasks versus code.
 |---|---|---|---|
 | `task-manager-specialist` | `.claude/agents/task-manager-specialist.md` | **Plan / Close.** Breaks an epic into an ordered backlog of atomic requirements before work starts, and closes each one out — commit hash and traceability recorded — after it lands. | No — backlog file only |
 | `requirement-specialist` | `.claude/agents/requirement-specialist.md` | **Red.** Reads a requirement, checks it against the INCOSE bar in `CLAUDE.md`, records the outcome in `elm/REQUIREMENTS.md` (via the `requirements-traceability` skill), and writes a failing test for it. Refuses to guess at ambiguous requirements — reports back instead. | Tests + the requirements ledger, never implementation |
-| `design-specialist` | `.claude/agents/design-specialist.md` | **Design.** Fits the requirement into the existing architecture, defines the interface/contract implementation must satisfy (checking `design-patterns` first for software components), flags drift before code is written. | No — architecture doc only |
+| `design-specialist` | `.claude/agents/design-specialist.md` | **Design.** Fits the requirement into the existing architecture, defines the interface/contract implementation must satisfy (checking `design-patterns`, `ux-patterns`, or `ui-patterns` first, depending on whether the component is backend, interaction, or visual), flags drift before code is written. | No — architecture doc only |
 | `qc-specialist` | `.claude/agents/qc-specialist.md` | **Verify.** Runs the applicable stack's format, lint, and test commands (see `stack-profiles`), logs its own run to `.claude/qc.log`, and reports a pass/fail summary to the main thread. | No — read/run only |
 | `commit-reviewer` | `.claude/agents/commit-reviewer.md` | **Gate.** Reviews the staged diff before any commit: atomicity, commit-message conventions, clean verify state, blast radius on infra diffs. Approves or blocks. | No — read/run only |
 | `schedule-tracker` | `.claude/agents/schedule-tracker.md` | **Health (cross-cutting).** Reads `elm/TASKS.md` at any time and reports stale items, current velocity, and schedule risk against any stated milestone. Not a step in any single item's flow. | No — read-only, no file of its own |
@@ -98,6 +98,22 @@ independently, against its own stack's profile; `design-specialist`'s
 contract for the requirement is what keeps the two halves consistent
 with each other without either one needing to know the other's
 toolchain.
+
+## Pattern toolboxes
+
+`design-specialist` draws from three parallel toolboxes when defining
+a contract, built to the same shape as `stack-profiles`: a compact
+symptom table in `SKILL.md`, one reference file per pattern loaded
+only when it's actually selected, so the cost of a toolbox existing is
+nearly zero until a requirement actually needs it. `design-patterns`
+covers software component shape (Strategy, Factory, Builder, ...);
+`ux-patterns` covers interaction and flow (Wizard/Stepper, Progressive
+Disclosure, ...); `ui-patterns` covers visual layout and presentation
+(Card, Modal, Design Tokens, ...). A single requirement can draw from
+more than one — see any toolbox's own note on combining with the
+others. Add a fourth the same way if a new kind of contract recurs
+enough to be worth naming (a `STACK.md` entry for whatever stack
+builds it would usually follow close behind).
 
 ## How they fit together
 

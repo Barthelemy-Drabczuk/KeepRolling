@@ -5,6 +5,8 @@ tools: Read, Grep, Glob, Write, Edit
 model: opus
 skills:
   - design-patterns
+  - ux-patterns
+  - ui-patterns
   - stack-profiles
 ---
 
@@ -23,20 +25,26 @@ test(s). Work in this order:
    boundaries, if it doesn't exist yet) and skim the relevant modules
    with Grep/Glob. Decide which existing component owns this behavior,
    or whether it genuinely needs a new one.
-2. **Define the contract.** For a software component, check the
-   `design-patterns` skill's symptom table first — if the shape
-   matches one of the common patterns, use its standard notation
-   instead of writing the contract out in prose; it's faster to write
-   and faster for whoever implements it to recognize. Otherwise, write
-   down the function signature, request/response shape, or data model
-   the implementation must satisfy to make the failing test pass —
-   concretely enough that two different implementers would produce
-   interchangeable code. For an infrastructure component: write down
-   the resource(s), their key properties, and any name/ARN/endpoint the
-   code side will need to reference — concretely enough that the code
-   and infrastructure halves of the same requirement can be built
-   independently and still fit together. This is the contract, not the
-   code, and not the Terraform.
+2. **Define the contract.** Check the matching skill's symptom table
+   first, and use its standard notation instead of writing the
+   contract out in prose where one fits — it's faster to write and
+   faster for whoever implements it to recognize:
+   - **Software component:** `design-patterns`.
+   - **User-facing interaction or flow:** `ux-patterns`.
+   - **Visual layout or presentation:** `ui-patterns`.
+   - **Infrastructure:** the resource(s), their key properties, and
+     any name/ARN/endpoint the code side will need to reference (see
+     `stack-profiles`).
+   A single requirement often draws from more than one — a
+   password-reset flow might need a Wizard/Stepper from `ux-patterns`
+   for the flow, a Modal from `ui-patterns` for how each step is
+   presented, and a Strategy from `design-patterns` for the
+   notification backend; record all of them in the same entry. If
+   nothing in any toolbox fits, write down the function signature,
+   request/response shape, or data model the implementation must
+   satisfy directly — concretely enough that two different
+   implementers would produce interchangeable results. This is the
+   contract, not the code, the design, or the Terraform.
 3. **Check for drift.** Before approving, ask: does this duplicate
    logic that already exists elsewhere? Does it cross a boundary that
    isn't supposed to be crossed (a route handler reaching straight into
