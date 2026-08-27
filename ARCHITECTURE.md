@@ -1595,3 +1595,254 @@ five required, result recorded in the commit message):
 Also worth eyeballing during step 1: the `ui.link("History", "/history")` on
 `/` and that following it does not disturb the pad (a full page load, so the
 marker resets to centre — expected).
+
+### FE-8a — The read-only journal listing at `/journal`
+
+No new component. New file **`backend/app/frontend/journal.py`** — the fourth
+per-module page file, after `frontend/auth.py` (FE-3a), `frontend/mood_pad.py`
+(FE-4) and `frontend/history.py` (FE-7), with the same `create() -> None`
+shape. `frontend/__init__.py` gains `journal` in its import line and one call
+in `create_pages()`; `frontend/mood_pad.py` gains exactly one line; `app.py`,
+`frontend/api.py`, `frontend/history.py` and `pyproject.toml` are untouched.
+
+```python
+from . import auth as auth_pages
+from . import history, journal, mood_pad
+
+
+def create_pages() -> None:
+    """Register every NiceGUI page."""
+    mood_pad.create()
+    auth_pages.create()
+    history.create()
+    journal.create()
+```
+
+The page is **structurally FE-7's `/history` with a different fetch and a
+different renderer**. That is the point: it is the second instance of a shape
+FE-7 already justified in detail, so the bullets below cover only what differs
+or is newly decided, and defer the rest to FE-7's entry rather than restating
+it. Anything FE-7 settled (async page body inside NiceGUI's 3 s
+`response_timeout`, reading `app.storage.user` before the first `await`,
+logged-out short-circuit before any URL is built, inline `ui.label` rather
+than `ui.notify` for page-load failures, status-code-first/body-never,
+`params=` not a hand-built query string) applies here unchanged.
+
+#### The module, literally
+
+```python
+"""The journal entries page, at /journal."""
+
+from datetime import datetime
+
+from nicegui import app, ui
+
+from . import api
+
+JOURNAL_EMPTY = "No journal entries yet."
+LOGIN_PROMPT = "Please log in to view your journal."
+GENERIC_FAILURE = "Could not complete the request."
+JOURNAL_LIMIT = 10
+
+
+def _format_timestamp(raw: str) -> str:
+    """Render an EntryResponse's naive-UTC ISO timestamp as ``%Y-%m-%d %H:%M UTC``."""
+    return datetime.fromisoformat(raw).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def create() -> None:
+    """Register the /journal page."""
+
+    @ui.page("/journal", title="Journal")
+    async def journal() -> None:
+        username = app.storage.user.get("username")
+        token = app.storage.user.get("token")
+        if not username or not token:
+            ui.label(JOURNAL_EMPTY)
+            return
+
+        async with api.client() as http:
+            response = await http.get(
+                f"/users/{username}/entries",
+                params={"limit": JOURNAL_LIMIT},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        if response.status_code == 200:
+            entries = response.json()
+            if entries:
+                with ui.column():
+                    for entry in entries:
+                        with ui.card():
+                            ui.label(_format_timestamp(entry["timestamp"]))
+                            ui.label(entry["content"])
+            else:
+                ui.label(JOURNAL_EMPTY)
+        elif response.status_code == 401:
+            ui.label(LOGIN_PROMPT)
+            ui.navigate.to("/login")
+        else:
+            ui.label(GENERIC_FAILURE)
+```
+
+Load-bearing details:
+
+- **`ui.column` of `ui.card`, not `ui.table` — and the container exists only
+  in the populated branch.** `EntryModel.content` / `schemas.EntryBase` allow
+  1–5000 characters (read from `schemas.py:69-91`, not recalled), which a
+  Quasar table cell clips to one line. Cards let the prose flow. Building the
+  `ui.column` inside `if entries:` rather than around the whole branch keeps
+  the logged-out and zero-entry DOM to a single `ui.label`, which is what the
+  two `client`-fixture tests read.
+- **`ui.label`, never `ui.html` / `ui.markdown`, for `content`.** Labels set
+  text, so 5000 characters of arbitrary user prose cannot inject markup into
+  the page. "Verbatim" in the requirement means *unmodified text*, not
+  *rendered as authored*; do not "improve" this into `ui.markdown` — that
+  would be a security change and a requirement change at once.
+- **Exactly two labels per card, timestamp first.** The order is the contract
+  (FE-8c appends an optional *third* label for the linked mood; if timestamp
+  and content were swapped, that third one would land in the middle of the
+  card).
+- **The API's newest-first order is preserved by not touching it.**
+  `get_entries` (`app.py:563-565`) already does
+  `.order_by(EntryModel.timestamp.desc()).offset(skip).limit(limit)`, per
+  REQ-ENTRY-3. No client-side `sorted()`, no `reverse=True` — same rule as
+  FE-7's table rows.
+- **`_format_timestamp` is a knowing second copy**, not an import. It is
+  private in `frontend/history.py`, and importing an `_`-prefixed name across
+  modules is worse than two identical two-liners. The row names the
+  extraction trigger: a **third** consumer. See the flag below — FE-8c makes
+  this decision worth re-reading, and the natural home if it is ever pulled
+  out is a small shared `frontend/format.py`, not `history.py` (journal
+  importing display helpers *from the history page module* would invert the
+  dependency between two sibling pages).
+- **`title="Journal"`** on the decorator, matching FE-7's
+  `title="Mood history"`. Not pinned by any test; set it anyway, or NiceGUI
+  titles the tab "NiceGUI" (FE-1's finding).
+- **`mood_id` is fetched but not rendered, and no moods request happens
+  here.** `EntryResponse` carries `mood_id`; FE-8a ignores it. Adding an
+  N+1 `GET /users/{u}/moods/{id}` per card would be drift against FE-8c,
+  which resolves the whole set with one windowed fetch.
+- **`GET /users/{username}/entries` is a sync `def` endpoint** (`app.py:534`),
+  so FastAPI runs it in the threadpool and it cannot block the event loop
+  during the page's `await` — the same property that makes FE-7's 3 s
+  `response_timeout` ample. Nothing here needs
+  `await ui.context.client.connected()`.
+
+#### This is the third authenticated call site — the trigger *is* met, and
+FE-12 discharges it
+
+FE-5's forward pointer (restated in FE-7's entry) says to extract an
+`Authorization`-header helper "when a third authenticated call site lands".
+`journal()` is that third site, after `mood_pad.log_mood()` and
+`history.history()`. **FE-8a still writes `f"Bearer {token}"` inline, on
+purpose**: bundling a three-file refactor into the commit that adds a page
+would violate the one-logical-change-per-commit rule, and the refactor has
+its own row — **FE-12**, which depends on FE-8a and extracts
+`api.auth_headers(token)` across all three sites in one behaviour-free
+commit. So the duplication here is scheduled, not overlooked. `api.client()`
+keeps its no-argument signature in both items. If FE-12 is dropped or
+deferred, this paragraph is the record that the trigger fired and was not
+answered.
+
+#### Open UX detail, deliberately not designed around
+
+**Newlines inside an entry collapse.** `ui.label` renders into a `<div>` with
+default `white-space: normal`, so a multi-line entry — which FE-8b's
+`ui.textarea` makes the common case — displays as one run-on paragraph. The
+fix is one cosmetic call (`.style("white-space: pre-wrap")`), but the row
+specifies "exactly two `ui.label`s" and lists no styling, so FE-8a ships
+without it and FE-8b's manual step 1 (save-success) is where the severity
+becomes visible. If it reads badly, that is a new requirement, not a silent
+amendment here. Same posture as FE-6b's key-repeat note.
+
+Related note, not a constraint: `tests/test_frontend.py`'s `_rendered_props`
+helper parses the served HTML by brace depth, so an entry whose `content`
+contains a literal `{` or `}` could confuse it — exactly the caveat FE-7
+recorded for mood `notes`. Unreachable from the `client` fixture (no
+authenticated fetch), so it stays a note.
+
+#### The one-line change to `frontend/mood_pad.py`
+
+```python
+        ui.link("History", "/history")
+        ui.link("Journal", "/journal")
+```
+
+Appended as the **last statement of `index()`**, after FE-7's History link.
+Same reasoning FE-7 gave: `_has_props` scans every element so any position
+would pass, and appending leaves the pad → readout → button → History
+construction order byte-identical. It must be `ui.link` — a
+`ui.button(on_click=lambda: ui.navigate.to(...))` renders no `href` prop and
+fails the test (FE-3a's finding, fourth application). Nothing else in
+`mood_pad.py` changes, and `/` still has no auth guard.
+
+#### Forward pointer for FE-8b
+
+The `with ui.column(): ...` block, plus the `if entries:` / `else` around it,
+is the body FE-8b lifts into its `@ui.refreshable` function — the fetch and
+the failure branches are *not* part of that lift, or a save would silently
+re-run the 401 branch. Keeping the container construction in one contiguous
+block here is what makes that a move rather than a rewrite.
+
+Out of scope, deliberately: the compose form and `POST /entries` (FE-8b);
+rendering or selecting a linked mood (FE-8c); editing or deleting an entry;
+pagination, "load more", filtering, search; any nav bar or back-link from
+`/journal` to `/`; any auth guard on any page; any change to
+`frontend/api.py`, `frontend/history.py`, `app.py` or the REST layer.
+
+**Traceability:** FE-8a → `frontend.journal.create()`'s `/journal` page and
+its private `_format_timestamp()` in `backend/app/frontend/journal.py`,
+registered from `frontend.create_pages()` in
+`backend/app/frontend/__init__.py`, plus the single
+`ui.link("Journal", "/journal")` in `frontend.mood_pad.create()`'s `index()`.
+Requirement: `TASKS.md`'s **FE-8a** row (epic "NiceGUI frontend redesign").
+Split in two, the same shape as FE-4/FE-5/FE-6a/FE-7.
+
+**Automated slice** — three tests, all with the plain `client` fixture, in
+`backend/app/tests/test_frontend.py`:
+
+- `test_journal_page_is_served_without_an_auth_guard` — `GET /journal` with
+  `follow_redirects=False` → 200, i.e. no guard. The unfollowed response is
+  what makes "no guard" testable at all.
+- `test_journal_page_shows_the_empty_prompt_when_logged_out` — the exact
+  `JOURNAL_EMPTY` string, `"No journal entries yet."`, is in the
+  server-rendered HTML. Deliberately CTA-free so FE-8b's compose box does not
+  force a wording change that would edit an already-passing test.
+- `test_root_page_links_to_journal` — an element on `/` carries
+  `href="/journal"`.
+
+**No `tests/test_journal.py` in this item, and that is correct**: FE-8a
+introduces no new pure function, and `_format_timestamp` is FE-7's two-liner
+copied — unit-testing it a second time would pin
+`datetime.fromisoformat(...).strftime(...)` twice without pinning anything
+new. The first `test_journal.py` lands with FE-8c's `mood_line` /
+`mood_option_label`. Everything else here sits behind an authenticated fetch
+and `app.storage.user` cannot be seeded over HTTP; `GET /users/{u}/entries`
+itself is already covered by `tests/test_entries.py` — do not re-test it
+through the UI, and do not reach for the banned NiceGUI fixtures.
+
+**Manual slice** (dev server from `backend/app/`, per the Testing policy; all
+five required, result recorded in the commit message):
+
+1. *Populated list* — logged in with at least three journal entries created
+   via `POST /users/{username}/entries` (curl or `/docs`, since FE-8b's
+   compose box does not exist yet), open `/journal` and confirm one card per
+   entry, each showing a timestamp line then the content; the **newest entry
+   is the top card**; timestamps read like `2026-08-27 14:05 UTC`; a long
+   (~2000-character) entry is shown in full and not truncated.
+2. *Limit* — with more than ten entries, confirm exactly ten cards.
+3. *Zero entries but logged in* — register a fresh user, log in, go straight
+   to `/journal` and confirm the string `"No journal entries yet."` and **no**
+   cards — the same string the logged-out visitor sees.
+4. *401 branch* — set `token` in `backend/app/.nicegui/storage-user-*.json`
+   to a garbage string, load `/journal`, and confirm the page shows "Please
+   log in to view your journal." and then navigates to `/login` (the message
+   is briefly visible first — expected, per FE-7's outbox note).
+5. *Generic failure branch* — set `username` in that same storage file to
+   another existing user, making the API answer 403, and confirm the page
+   shows exactly "Could not complete the request." with no response body, no
+   traceback and no navigation.
+
+Worth eyeballing during step 1: the `ui.link("Journal", "/journal")` on `/`
+sits below the History link and both still work.

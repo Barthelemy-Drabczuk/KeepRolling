@@ -1,4 +1,9 @@
-"""Tests for the NiceGUI frontend mounted onto the FastAPI app (FE-1, FE-2, FE-3a, FE-4, FE-5)."""
+"""Tests for the NiceGUI frontend mounted onto the FastAPI app.
+
+Covers the server-observable half of FE-1, FE-2, FE-3a, FE-4, FE-5, FE-6a,
+FE-7 and FE-8a; each item's section comment says what it deliberately leaves
+to manual verification.
+"""
 
 import html
 import json
@@ -558,3 +563,58 @@ def test_history_page_shows_the_empty_prompt_when_logged_out(client) -> None:
 def test_root_page_links_to_history(client) -> None:
     """The pad page links across to /history, making the history page reachable."""
     assert _has_props(client, "/", href="/history")
+
+
+# --- FE-8a: the journal page's logged-out render, and its link from / ---------
+#
+# Same three-assertion shape as FE-7 above, for the same reason: only the
+# unguarded route, the logged-out prompt, and the link that makes the page
+# reachable are server-observable.
+#
+# Everything else FE-8a specifies sits behind an authenticated fetch of
+# GET /users/{username}/entries -- the populated ui.card list, the
+# newest-first order, the "%Y-%m-%d %H:%M UTC" timestamp format, the
+# zero-entry-but-logged-in empty state, and both the 401 and
+# generic-failure branches. All of those depend on app.storage.user, which
+# cannot be seeded over HTTP, so per ARCHITECTURE.md's Testing policy they
+# are manual-verification-only, and nicegui.testing's `user`/`Screen`
+# fixtures are not used to reach them (they are banned repo-wide).
+#
+# FE-8a deliberately introduces *no* new pure function, so there is no
+# tests/test_journal.py yet. Its one helper, `_format_timestamp`, is the
+# sanctioned second copy of frontend/history.py's private two-liner, and
+# FE-7 did not unit-test that one either -- pinning it in a second place
+# would assert the same `datetime.fromisoformat(...).strftime(...)` call
+# twice without pinning anything FE-7 has not already fixed. The first
+# FE-8 unit tests land with FE-8c's `mood_line`/`mood_option_label`.
+#
+# The empty prompt is asserted verbatim and is deliberately CTA-free:
+# FE-8b adds a compose box to this same page and must keep this string
+# unchanged, so it cannot say "write your first one above" while no such
+# box exists.
+#
+# As with /history, the status test passes follow_redirects=False on
+# purpose: TestClient follows redirects by default, so a plain
+# client.get("/journal").status_code == 200 would also pass against a
+# guard that 307s a logged-out visitor to /login, pinning nothing.
+
+JOURNAL_EMPTY_PROMPT = "No journal entries yet."
+
+
+def test_journal_page_is_served_without_an_auth_guard(client) -> None:
+    """GET /journal returns 200 to a logged-out visitor rather than redirecting to /login."""
+    response = client.get("/journal", follow_redirects=False)
+
+    assert response.status_code == 200
+
+
+def test_journal_page_shows_the_empty_prompt_when_logged_out(client) -> None:
+    """A logged-out visitor to /journal sees FE-8a's empty-state prompt, not a list."""
+    response = client.get("/journal", follow_redirects=False)
+
+    assert JOURNAL_EMPTY_PROMPT in response.text
+
+
+def test_root_page_links_to_journal(client) -> None:
+    """The pad page links across to /journal, making the journal page reachable."""
+    assert _has_props(client, "/", href="/journal")
