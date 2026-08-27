@@ -1,18 +1,22 @@
-# STACK.md
+# Stack map
 
-Maps path prefixes in this repository to the stack profile that governs
-them — which "red," "verify," and "green" concretely mean for code under
-that prefix. Read by `qc-specialist` and `commit-reviewer` (via the
-`stack-profiles` skill) to pick the right format/lint/test commands, and
-by `requirement-specialist`/`task-manager-specialist` to fill in a
-requirement's `Stack:` field in `elm/REQUIREMENTS.md`.
+Which technology stack owns which part of the repo. Agents consult
+this — via the `stack-profiles` skill — before running any
+red-confirmation, verify, or lint/format command, instead of assuming
+one language's tooling applies everywhere.
 
-| Path prefix | Stack |
-|---|---|
-| `backend/app/` | `python-pytest` |
+| Path prefix | Stack | Profile |
+|---|---|---|
+| `backend/app/frontend/` | python-frontend | `stack-profiles/references/python-frontend.md` |
+| `backend/` | python | `stack-profiles/references/python.md` |
+| `infra/` | terraform | `stack-profiles/references/terraform.md` |
 
-Only one stack is defined today — this project has no infrastructure
-code (no Terraform, no IaC of any kind) as of this writing. Add a new
-stack the same way AGENTS.md describes for a seventh subagent: a row
-here, plus a reference file under
-`.claude/skills/stack-profiles/references/`.
+Prefixes are matched most-specific-first: `backend/app/frontend/`'s row
+wins over the broader `backend/` row for anything under it. Same
+language and tooling as `python`, but `python-frontend` exists as its
+own profile because "red"/"verify"/"green" mean something narrower
+there — see that profile before assuming a passing/failing frontend
+test proves what it would for a backend one.
+
+Add a row here whenever a new stack enters the repo, and a matching
+`stack-profiles/references/<stack>.md`.

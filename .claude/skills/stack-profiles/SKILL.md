@@ -1,47 +1,53 @@
 ---
 name: stack-profiles
-description: Defines what "red" (failing test confirmation), "verify" (format/lint/test), and "green" concretely mean for each stack this project uses, keyed off STACK.md's path-prefix mapping. Use whenever requirement-specialist needs a red-confirmation command, qc-specialist or commit-reviewer needs format/lint/test commands, or task-manager-specialist needs to decide whether a requirement needs an infrastructure half before its code half. Load exactly one reference file for the stack that matches the changed path(s), not all of them.
+description: Defines what "red", "green", and "verify" concretely mean for each technology stack this project uses — Python/pytest, Terraform, or others. Use this whenever requirement-specialist needs to write or confirm a failing check, whenever qc-specialist or commit-reviewer needs to run verification, or whenever a requirement or diff spans more than one stack and the split needs to be understood. Trigger this before running any test/lint/format command — never assume pytest or ruff exist just because they did last time. Check STACK.md at the repo root, or the requirement's own Stack: field in elm/REQUIREMENTS.md, before doing anything stack-specific.
 ---
 
 # Stack profiles
 
-A shortcut for routing to the right concrete commands instead of
-re-deriving them from `pyproject.toml`/tooling config every time. The
-project can span more than one stack (application code, infrastructure)
-without any of the six pipeline agents hardcoding a language or
-toolchain — they all go through this skill and `STACK.md` instead.
+Every requirement targets one or more technology stacks. This skill is
+what keeps requirement-specialist, qc-specialist, and commit-reviewer
+from hardcoding one language's tools into their own instructions.
 
-## Finding the right profile
+## Determining the stack
 
-1. Look up the changed path(s) against `STACK.md`'s prefix table at the
-   repo root.
-2. Load `references/<stack>.md` for that one stack. If a diff spans more
-   than one stack's paths, load each stack's reference separately and
-   run/report them as separate sections — never merge their output into
-   one verdict (this mirrors `qc-specialist`'s and `commit-reviewer`'s
-   own instructions).
+1. Check `STACK.md` at the repo root — it maps path prefixes to
+   stacks.
+2. If you already know the requirement's ID, `elm/REQUIREMENTS.md`'s
+   `Stack:` field on that entry is authoritative — trust it over
+   guessing from paths.
+3. If a diff or requirement touches more than one stack's paths, treat
+   it as multi-stack: apply each relevant profile separately. Never
+   blend their commands or their pass/fail verdicts into one verdict.
 
-## What every reference file defines
+Currently defined profiles:
+- `references/python.md`
+- `references/python-frontend.md`
+- `references/terraform.md`
 
-Each `references/<stack>.md` answers the same four questions, so any
-agent using this skill can find the same information in the same shape
-regardless of stack:
+Add a new one the same way: one reference file per stack, covering the
+same things every profile needs (below), plus a row in `STACK.md`.
 
-- **Red-confirmation** — the exact command to run a newly-added failing
-  test (or its stack equivalent, e.g. a Terraform plan/test) and how to
-  tell a *valid* red state (fails for the behavior under test) from an
-  *invalid* one (fails on a typo, syntax error, or collection error).
-- **Verify** — the exact format-check, lint, and full-test-suite
-  commands, and the working directory each must run from.
-- **Green** — what "the implementation satisfies the test" means
-  concretely for this stack (usually: the same red-confirmation command
-  now passes, plus the full suite still passes).
-- **Infra-vs-code split signal** — for `task-manager-specialist`: what
-  marks a requirement as needing this stack's half of a two-stack split
-  (e.g., "references a resource/table/queue that doesn't exist yet").
+## What every profile defines
 
-## Currently defined
+- **Location & naming** — where source and tests/checks live, and how
+  they're named.
+- **Red confirmation** — the command(s) that prove a requirement isn't
+  satisfied yet, and what "fails for the expected reason" means here.
+  Every stack shares one rule regardless of its tooling: a test that
+  fails on a typo, a syntax error, or a collection error you introduced
+  is not a valid red state.
+- **Verify commands** — format check, lint, full test run, in order.
+- **Stack-specific cautions** — anything a reviewer coming from another
+  stack would get wrong by assuming it works like code.
 
-`references/python-pytest.md` — this project's only stack today (see
-`STACK.md`). Add a new one the same way: a reference file answering the
-four questions above, plus a row in `STACK.md`.
+## Multi-stack requirements
+
+"The code and what it runs on" often means one requirement's design
+actually needs two atomic implementation units — one per stack — with
+the infrastructure one typically ordered first, since code that
+references a resource can't go green before that resource exists to
+reference. That split is task-manager-specialist's job at decomposition
+time. requirement-specialist and qc-specialist shouldn't try to paper
+over a multi-stack unit by running every stack's commands as if they
+were one.

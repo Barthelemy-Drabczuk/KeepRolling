@@ -85,8 +85,10 @@ governance and lifecycle for requirements/design/tasks versus code.
 None of the six agents hardcode a language or toolchain — `STACK.md`
 at the repo root maps path prefixes to stacks, and the `stack-profiles`
 skill defines what "red," "verify," and "green" concretely mean for
-each one (currently Python/pytest and Terraform; add a stack by adding
-a row to `STACK.md` and a reference file to the skill).
+each one (currently Python and Terraform, though this repo has no
+Terraform code yet — the `infra/` row is there for whenever it does;
+add a stack by adding a row to `STACK.md` and a reference file to the
+skill).
 
 This is also the mechanism behind building "the code and what it runs
 on" together: a requirement carries a `Stack:` field in
