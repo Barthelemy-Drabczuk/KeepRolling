@@ -1846,3 +1846,343 @@ five required, result recorded in the commit message):
 
 Worth eyeballing during step 1: the `ui.link("Journal", "/journal")` on `/`
 sits below the History link and both still work.
+
+### FE-8b — The journal compose form at `/journal`
+
+No new component and **no new file**: `backend/app/frontend/journal.py` is the
+only file that changes. `frontend/__init__.py`, `frontend/api.py`,
+`frontend/history.py`, `frontend/mood_pad.py`, `app.py`, the REST layer and
+`pyproject.toml` are all untouched, and FE-8a's three passing tests keep
+passing unchanged — `JOURNAL_EMPTY` stays verbatim and `/journal` stays
+unguarded.
+
+The handler is **FE-5's `log_mood()` shape applied to `POST /entries`**:
+read-storage → short-circuit → `async with api.client()` →
+201/401/`else`, status-code-first and body-never. Everything FE-5 settled
+about that shape (why the logged-out case is short-circuited before the URL
+is built, why `ui.notify` and not an inline label for *action* failures, why
+the 401 branch's `ui.navigate.to("/login")` is post-action navigation rather
+than an auth guard, why `f"Bearer {token}"` is written inline pending FE-12)
+applies here unchanged and is not restated. What is new is the compose
+element itself, the client-side length gate, and the `@ui.refreshable`
+rewiring of FE-8a's list.
+
+#### The module, literally (the whole updated `frontend/journal.py`)
+
+```python
+"""The journal entries page, at /journal.
+
+See ARCHITECTURE.md's FE-8a entry for the read-only listing and FE-8b's
+for the compose form: why entry_list is defined inside the page function
+rather than at module scope, why validation runs before the request, and
+why a successful save re-fetches the list instead of prepending the
+POST's own response body.
+"""
+
+from datetime import datetime
+
+import httpx
+from nicegui import app, ui
+
+from . import api
+
+JOURNAL_EMPTY = "No journal entries yet."
+LOGIN_PROMPT = "Please log in to view your journal."  # page-load 401
+COMPOSE_LOGIN_PROMPT = "Please log in to write a journal entry."  # save 401
+GENERIC_FAILURE = "Could not complete the request."
+SAVE_SUCCESS = "Journal entry saved!"
+CONTENT_INVALID = "Journal entry must be between 1 and 5000 characters."
+COMPOSE_LABEL = "New journal entry"
+SAVE_CAPTION = "Save entry"
+CONTENT_MAX = 5000
+JOURNAL_LIMIT = 10
+
+
+def _format_timestamp(raw: str) -> str:
+    """Render an EntryResponse's naive-UTC ISO timestamp as ``%Y-%m-%d %H:%M UTC``."""
+    return datetime.fromisoformat(raw).strftime("%Y-%m-%d %H:%M UTC")
+
+
+async def _fetch_entries(username: str, token: str) -> httpx.Response:
+    """GET the newest ``JOURNAL_LIMIT`` journal entries for ``username``."""
+    async with api.client() as http:
+        return await http.get(
+            f"/users/{username}/entries",
+            params={"limit": JOURNAL_LIMIT},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+def create() -> None:
+    """Register the /journal page."""
+
+    @ui.page("/journal", title="Journal")
+    async def journal() -> None:
+        @ui.refreshable
+        def entry_list(entries: list[dict]) -> None:
+            if entries:
+                with ui.column():
+                    for entry in entries:
+                        with ui.card():
+                            ui.label(_format_timestamp(entry["timestamp"]))
+                            ui.label(entry["content"])
+            else:
+                ui.label(JOURNAL_EMPTY)
+
+        async def save_entry() -> None:
+            content = (compose.value or "").strip()
+            if not content or len(content) > CONTENT_MAX:
+                ui.notify(CONTENT_INVALID)
+                return
+            username = app.storage.user.get("username")
+            token = app.storage.user.get("token")
+            if not username or not token:
+                ui.notify(COMPOSE_LOGIN_PROMPT)
+                ui.navigate.to("/login")
+                return
+            async with api.client() as http:
+                response = await http.post(
+                    f"/users/{username}/entries",
+                    json={"content": content},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if response.status_code == 201:
+                ui.notify(SAVE_SUCCESS)
+                compose.value = ""
+                refreshed = await _fetch_entries(username, token)
+                if refreshed.status_code == 200:
+                    entry_list.refresh(refreshed.json())
+            elif response.status_code == 401:
+                ui.notify(COMPOSE_LOGIN_PROMPT)
+                ui.navigate.to("/login")
+            else:
+                ui.notify(GENERIC_FAILURE)
+
+        compose = ui.textarea(label=COMPOSE_LABEL)
+        compose.props(f"maxlength={CONTENT_MAX}")
+        ui.button(SAVE_CAPTION, color="high-energy-pleasant", on_click=save_entry)
+
+        username = app.storage.user.get("username")
+        token = app.storage.user.get("token")
+        if not username or not token:
+            entry_list([])
+            return
+
+        response = await _fetch_entries(username, token)
+        if response.status_code == 200:
+            entry_list(response.json())
+        elif response.status_code == 401:
+            ui.label(LOGIN_PROMPT)
+            ui.navigate.to("/login")
+        else:
+            ui.label(GENERIC_FAILURE)
+```
+
+Load-bearing details:
+
+- **`entry_list` is defined *inside* the page function, never at module
+  scope.** Verified in `nicegui/functions/refreshable.py` (3.16.0): a
+  `refreshable` object keeps `self.targets`, appending one target per call
+  (`__call__`, lines 80-85), and `refresh()` re-runs the function for *every*
+  target whose `instance` matches — and `instance` is `None` for every plain
+  (non-method) function, so nothing separates one client's target from
+  another's (`_execute_refresh`, lines 109-117). A module-scope `@ui.refreshable`
+  would therefore make one user's save repaint **every** connected client's
+  journal with the saving user's entries — a cross-session data leak, not
+  just a redraw glitch. Defining it per page call gives each client its own
+  object with exactly one target. `prune()` then keeps that trivially correct.
+- **The list function stays synchronous and takes `entries` as a parameter;
+  the fetch stays outside it.** This is FE-8a's forward pointer honoured
+  literally. An `async` refreshable that fetched for itself would re-run
+  FE-8a's 401/generic branches on every save (a second inline "Please log in
+  to view your journal." plus a navigation, on top of the notify the save
+  path already showed), or — if those branches were dropped to avoid that —
+  would swallow the page-load failures that manual steps 4 and 5 exist to
+  check. Fetch outside, render inside.
+- **`entry_list(entries)` and `entry_list.refresh(entries)` both pass the
+  argument positionally.** `_execute_refresh` re-raises a `TypeError` with
+  the message "needs to be consistently passed … either as positional or as
+  keyword argument" (lines 118-126) if the two call styles are mixed; and
+  `target.args = args or target.args` (line 116) is what makes the refresh
+  actually replace the previous list rather than re-render the stale one. Do
+  not "clarify" either call into `entries=...`.
+- **`entry_list.refresh(...)` is *not* awaited.** `refresh()` returns an
+  `AwaitableResponse`, which schedules its fire-and-forget path as a
+  background task in `__init__` and raises `RuntimeError` if awaited any
+  later than immediately (`nicegui/awaitable_response.py:29-33`). Since the
+  list function is synchronous, `_execute_refresh` yields no awaitables and
+  the fire-and-forget path does the whole re-render on the next loop tick.
+  Never bind the return value to a variable and await it afterwards.
+- **The compose elements are built before the storage check, so the form
+  renders for a logged-out visitor and sits above the list.** This is the
+  whole automated surface of FE-8b: the `client` fixture is always a
+  logged-out session, so the textarea and button must exist on that render or
+  all four tests fail. It also matches `/`, where the pad and "Log this mood"
+  render logged-out and short-circuit on click.
+- **The logged-out branch calls `entry_list([])` rather than
+  `ui.label(JOURNAL_EMPTY)` directly.** Same rendered string (the `else` arm
+  emits exactly that label), so
+  `test_journal_page_shows_the_empty_prompt_when_logged_out` keeps passing —
+  NiceGUI serializes every element of the page into the HTML payload
+  regardless of nesting, so being inside a `RefreshableContainer` does not
+  hide it. Going through the refreshable keeps one construction path for the
+  list instead of two that can drift apart.
+- **Validation runs before the request, not after.** REQ-ENTRY-1's
+  `min_length=1, max_length=5000` (`schemas.EntryBase`) means an empty or
+  over-long body comes back 422, whose `detail` echoes the submitted input —
+  and FE-3b's rule is that a raw response body must never reach `ui.notify`.
+  Checking locally keeps that 422 path unreachable through the UI and lets
+  the message name the actual rule. The generic `else` branch stays as the
+  backstop, so a 422 that somehow does arrive still shows the fixed string.
+- **`maxlength=5000` is belt-and-suspenders, not the guard.** It is real —
+  Quasar's `useFieldProps` declares `maxlength: [Number, String]` and QInput
+  binds it onto the native element it renders for `type === "textarea"` — but
+  it only constrains *typing/pasting into that one field*. It does not
+  survive a programmatic `compose.value = ...`, a websocket message crafted
+  by hand, or the prop being dropped in a later refactor, and it cannot
+  express the *stripped*-and-non-empty half of the rule at all (whitespace
+  passes `maxlength` happily). So the `len(content) > CONTENT_MAX` check
+  stays even though typing alone cannot trip it: it is the guard, the prop is
+  the early feedback. `.props(f"maxlength={CONTENT_MAX}")` stores the value
+  as the *string* `"5000"` (`Props.parse`'s unquoted branch — the same
+  finding FE-6a recorded for `tabindex=0`), which is why the test compares
+  `str(...)`.
+- **`(compose.value or "").strip()`, not `compose.value.strip()`.** NiceGUI
+  3.16.0 types `Input.value` / `Textarea.value` as `str | None` (with a
+  "DEPRECATED: change to None in 4.0" comment on the `''` default), so a
+  cleared field can legitimately hand back `None`. Same defensive shape
+  FE-3a's register validators already use (`len(v or "")`).
+- **The handler re-reads `app.storage.user` at click time** instead of
+  closing over the page-level `username`/`token`. The page renders for
+  logged-out visitors, so those locals are `None` on exactly the render where
+  someone might log in elsewhere and come back to click Save; re-reading is
+  also what `mood_pad.log_mood()` does. The names deliberately shadow the
+  page-level ones — Python makes them local to `save_entry` by assignment, no
+  `nonlocal`, and no path reads them before assigning.
+- **Body is `{"content": content}` only** — no `timestamp` (REQ-ENTRY-2
+  defaults it server-side), no `mood_id` (FE-8c). The value posted is the
+  *stripped* text, i.e. what was validated, never `compose.value` re-read.
+- **`_fetch_entries` is extracted because there are now two GET call sites**
+  (page load and post-save refresh) in one module; leaving both inline would
+  duplicate the URL, the `params=` window and the header three lines apart.
+  It returns the `httpx.Response` rather than a decoded list because the page
+  needs the status code to pick between three branches. `import httpx` at
+  module scope is for that annotation only; the module already handles
+  response objects, and `httpx` has been a direct runtime dependency since
+  a585be0. Returning from inside `async with api.client()` is safe: these are
+  non-streaming requests, fully read before the client closes — the same
+  reason FE-7/FE-8a read `.json()` after the `with` block exits.
+- **A successful save re-fetches; it does not prepend the POST's response
+  body to a local list.** `POST /users/{username}/entries` does return the
+  created `EntryResponse`, so a client-side prepend would save a round trip —
+  but it would also mean re-implementing the server's newest-first ordering
+  and the `limit=10` window in the page (`entries[:JOURNAL_LIMIT]`), which is
+  exactly the client-side re-derivation FE-7 and FE-8a refused. The extra
+  call is in-process ASGI, not network.
+- **A failed refresh-fetch is silent.** The row specifies the three branches
+  of the *POST*; the refresh GET is machinery, and its failure modes are
+  already visible on the next page load. Since `ui.notify(SAVE_SUCCESS)` has
+  already fired for a save that genuinely succeeded, following it with
+  "Could not complete the request." would misreport the outcome. So the
+  refresh happens only on 200 and the stale list is left alone otherwise —
+  a design call made here, not something TASKS.md's row enumerates.
+- **Constants, not literals, for the two login prompts** — `LOGIN_PROMPT`
+  (view, page-load 401) and `COMPOSE_LOGIN_PROMPT` (write, save 401) are
+  different strings by requirement and sit next to each other on purpose;
+  the trailing comments are there so neither gets "unified" into the other.
+  `LOGIN_PROMPT` keeps its FE-8a name so the diff stays additive.
+
+#### Open UX details, deliberately not designed around
+
+- **Nothing disables the button while the POST is in flight**, so a fast
+  double-click can create two entries. FE-5 recorded the same gap for "Log
+  this mood" and listed the fix as out of scope; FE-8b keeps that posture
+  rather than inventing a debounce the row does not ask for. If it matters,
+  it is one new requirement covering both buttons.
+- **FE-8a's newline-collapse note gets its first real exposure here.** A
+  `ui.textarea` makes multi-line entries the common case, and `ui.label`
+  renders with default `white-space: normal`, so they display as one
+  paragraph. Manual step 1 is where this becomes visible. Still a new
+  requirement (one `.style("white-space: pre-wrap")` call), not a silent
+  amendment.
+
+#### Note for FE-12
+
+`journal.py` now has **two** `f"Bearer {token}"` sites (`_fetch_entries` and
+`save_entry`), so FE-12's `api.auth_headers(token)` extraction covers four
+call sites across three modules rather than three. FE-8b still writes them
+inline for the same reason FE-8a did: a cross-module refactor does not belong
+in the commit that adds a feature.
+
+Out of scope, deliberately: linking a mood to the entry and rendering linked
+moods (FE-8c — its `ui.select` goes next to `compose`, and its `mood_id` key
+into this POST body); editing or deleting an entry; disabling the button
+during the request; pagination/"load more"; any auth guard on `/journal`; any
+change to `frontend/api.py`, `frontend/history.py`, `frontend/mood_pad.py`,
+`frontend/__init__.py`, `app.py` or the REST layer.
+
+**Traceability:** FE-8b → the `entry_list()` `@ui.refreshable` and the
+`save_entry()` closure inside `frontend.journal.create()`'s `journal()` page,
+the `ui.textarea(label="New journal entry")` / `ui.button("Save entry", …)`
+pair that precedes them in the DOM, and the module-level
+`_fetch_entries()` helper — all in `backend/app/frontend/journal.py`.
+Requirement: `TASKS.md`'s **FE-8b** row (epic "NiceGUI frontend redesign").
+Split in two, the same shape as FE-5/FE-7/FE-8a.
+
+**Automated slice** — four tests, all with the plain (logged-out) `client`
+fixture, in `backend/app/tests/test_frontend.py`:
+
+- `test_journal_page_renders_the_compose_textarea` — an element on
+  `GET /journal` carries `label="New journal entry"` **and**
+  `type="textarea"`, the discriminator that separates `ui.textarea` from
+  `ui.input` (`Textarea.__init__` sets `_props['type'] = 'textarea'`).
+- `test_journal_compose_textarea_caps_input_at_5000_characters` — that same
+  element's `maxlength` prop stringifies to `"5000"`.
+- `test_journal_page_renders_the_save_entry_button` — an element is labelled
+  `"Save entry"`.
+- `test_journal_save_entry_button_uses_high_energy_pleasant` — that same
+  element carries `color="high-energy-pleasant"` (hyphenated, per FE-3a:
+  an underscored name degrades to an inline style and the prop vanishes).
+
+No new `tests/test_journal.py`: FE-8b adds no pure function (`save_entry`
+and `entry_list` are closures that touch the network and the DOM, and
+`_fetch_entries` is one HTTP call). The first unit tests for this module
+still land with FE-8c. `POST /users/{username}/entries` is already covered by
+`tests/test_entries.py` (REQ-ENTRY-1/3) — do not re-test it through the UI,
+and do not reach for the banned NiceGUI fixtures to drive the click path.
+
+**Manual slice** (dev server from `backend/app/`, per the Testing policy; all
+five required, result recorded in the commit message):
+
+1. *Save success* — logged in on `/journal`, type a multi-line entry, click
+   "Save entry", and confirm: the notification "Journal entry saved!", the
+   textarea goes empty, and the new entry appears as the **top card without a
+   page reload**, its timestamp formatted `2026-08-27 14:05 UTC`. With ten or
+   more prior entries, confirm the list still shows exactly ten cards after
+   the refresh (i.e. the oldest dropped off).
+2. *Empty-content validation* — with the textarea empty, and again with only
+   spaces/newlines in it, click "Save entry" and confirm the notification
+   "Journal entry must be between 1 and 5000 characters.", that the list does
+   not change, and — in the browser's network tab or the server log — that
+   **no `POST /users/{username}/entries` was sent at all**. Also confirm the
+   field refuses to accept a 5001st character when pasting a long text.
+3. *Logged out* — in a fresh private window (no `app.storage.user` entries),
+   confirm the textarea and "Save entry" button are visible alongside "No
+   journal entries yet.", then type something and click: notification "Please
+   log in to write a journal entry." and navigation to `/login`, with no
+   request sent.
+4. *Expired/invalid token* — set `token` in
+   `backend/app/.nicegui/storage-user-*.json` to a garbage string, reload
+   `/journal` (which will show FE-8a's page-load 401 path), then from a
+   session where the page rendered, click "Save entry" with real content and
+   confirm the same "Please log in to write a journal entry." notification
+   and redirect — this exercises the response branch where step 3 exercises
+   the short-circuit.
+5. *Reload persistence* — after step 1, hard-reload `/journal` and confirm
+   the saved entry is still the top card with identical text (whitespace
+   stripped at the ends, interior text untouched), proving the refresh
+   rendered what the API actually stored rather than a client-side echo.
+
+Worth eyeballing during step 1: the compose form sits **above** the list, and
+the "No journal entries yet." string is unchanged for a fresh user with the
+form present.

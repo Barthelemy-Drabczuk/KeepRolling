@@ -618,3 +618,84 @@ def test_journal_page_shows_the_empty_prompt_when_logged_out(client) -> None:
 def test_root_page_links_to_journal(client) -> None:
     """The pad page links across to /journal, making the journal page reachable."""
     assert _has_props(client, "/", href="/journal")
+
+
+# --- FE-8b: the journal compose form's initial render at /journal -------------
+#
+# FE-8b names exactly one server-observable thing: the compose form renders
+# for a *logged-out* visitor too (matching /'s pad+button, which render
+# logged-out and short-circuit on click), so the `client` fixture -- always a
+# fresh, logged-out session -- can see the textarea's label and the button's
+# caption/colour on GET /journal. That is the whole automated surface.
+#
+# Everything else FE-8b specifies runs over NiceGUI's websocket after the page
+# is served and is manual-verification-only per ARCHITECTURE.md's Testing
+# policy: the click handler, the client-side 1-5000 validation notify, the
+# logged-out short-circuit notify + navigation, the authenticated POST
+# /users/{username}/entries, all three response branches (201/401/other), the
+# textarea clear, and the @ui.refreshable list re-render. Per that same policy
+# nicegui.testing's `user`/`Screen` fixtures are not used to reach them. FE-8b
+# has five enumerated manual acceptance steps covering exactly those.
+#
+# The endpoint the handler will call is already covered below the UI in
+# tests/test_entries.py (REQ-ENTRY-1/3); FE-8b must not re-test it through the
+# frontend.
+#
+# Verified against NiceGUI 3.16.0's source rather than assumed:
+#
+#   * `ui.textarea` (nicegui/elements/textarea.py) subclasses `Input` and sets
+#     `self._props['type'] = 'textarea'`, so a textarea is distinguishable
+#     from a plain `ui.input` in the rendered props -- same discriminator the
+#     FE-3a password tests use. `label=` lands in props verbatim.
+#   * `.props("maxlength=5000")` goes through `Props.parse`
+#     (nicegui/props.py), whose unquoted branch stores the value as the
+#     *string* "5000" -- the same string-not-int behaviour FE-6a's
+#     `tabindex=0` test documents. `str(...)` is applied below so the
+#     assertion holds whichever form reaches props.
+#   * Quasar honours it: `useFieldProps` declares `maxlength: [Number,
+#     String]` and QInput's control renderer binds `maxlength:
+#     props.maxlength` onto the native element it renders for `type ===
+#     "textarea"` (nicegui/static/quasar.umd.js). So the hard input-level cap
+#     FE-8b asks for is real, not decorative.
+#   * `@ui.refreshable` (nicegui/functions/refreshable.py) still wraps the
+#     function in a `refreshable` object exposing `.refresh(*args,
+#     **kwargs)`, which clears each target's container and re-runs the
+#     function; async functions are supported (`_execute_refresh` collects
+#     awaitables). Nothing about the list's re-render is server-observable, so
+#     nothing here asserts on it.
+#
+# FE-8a's "No journal entries yet." prompt is deliberately left untouched
+# above: FE-8b keeps it verbatim, so
+# test_journal_page_shows_the_empty_prompt_when_logged_out must keep passing
+# unchanged once the compose form lands.
+
+COMPOSE_LABEL = "New journal entry"
+COMPOSE_CAPTION = "Save entry"
+COMPOSE_MAXLENGTH = "5000"
+
+
+def test_journal_page_renders_the_compose_textarea(client) -> None:
+    """A logged-out visitor to /journal sees a multi-line "New journal entry" field."""
+    assert _has_props(client, "/journal", label=COMPOSE_LABEL, type="textarea")
+
+
+def test_journal_compose_textarea_caps_input_at_5000_characters(client) -> None:
+    """The compose textarea carries maxlength=5000, REQ-ENTRY-1's cap, at the input level."""
+    matches = [
+        props
+        for props in _rendered_props(client, "/journal")
+        if props.get("label") == COMPOSE_LABEL
+    ]
+    assert matches, f"GET /journal rendered no element labelled {COMPOSE_LABEL!r}"
+
+    assert str(matches[0].get("maxlength")) == COMPOSE_MAXLENGTH
+
+
+def test_journal_page_renders_the_save_entry_button(client) -> None:
+    """A logged-out visitor to /journal sees a button captioned "Save entry"."""
+    assert _has_props(client, "/journal", label=COMPOSE_CAPTION)
+
+
+def test_journal_save_entry_button_uses_high_energy_pleasant(client) -> None:
+    """The "Save entry" button itself carries FE-2's high-energy/pleasant colour."""
+    assert _has_props(client, "/journal", label=COMPOSE_CAPTION, color="high-energy-pleasant")
