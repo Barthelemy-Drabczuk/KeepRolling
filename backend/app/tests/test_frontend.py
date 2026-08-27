@@ -699,3 +699,56 @@ def test_journal_page_renders_the_save_entry_button(client) -> None:
 def test_journal_save_entry_button_uses_high_energy_pleasant(client) -> None:
     """The "Save entry" button itself carries FE-2's high-energy/pleasant colour."""
     assert _has_props(client, "/journal", label=COMPOSE_CAPTION, color="high-energy-pleasant")
+
+
+# --- FE-9a: the analytics page's logged-out render, and its link from / -------
+#
+# Same three-assertion shape as FE-7 and FE-8a above, for the same reason:
+# only the unguarded route, the logged-out prompt, and the link that makes
+# the page reachable are server-observable.
+#
+# Everything else FE-9a specifies sits behind an authenticated fetch of
+# GET /users/{username}/analytics/statistics -- the distribution bar chart,
+# the zero-mood-but-logged-in empty state, and both the 401 and
+# generic-failure branches. All depend on app.storage.user, which cannot be
+# seeded over HTTP, so per ARCHITECTURE.md's Testing policy they are
+# manual-verification-only, and nicegui.testing's `user`/`Screen` fixtures
+# are not used to reach them (banned repo-wide).
+#
+# Worth recording, because it is counter-intuitive and was checked rather
+# than assumed: ui.echart *would* be server-observable if the chart ever
+# rendered for a logged-out visitor. NiceGUI 3.16.0 stores the whole
+# options dict as the element's `options` prop, and an empirical probe
+# confirmed series names, numeric data and itemStyle colours all survive
+# into GET /'s HTML and parse through _rendered_props above. The chart is
+# untestable here not because echart hides its options, but because FE-9a
+# renders no chart at all without a token. That is why the options-building
+# arithmetic is a pure function unit-tested in tests/test_analytics_page.py
+# instead -- the same split FE-4 made for pixel_to_mood.
+#
+# As with /history and /journal, the status test passes
+# follow_redirects=False on purpose: TestClient follows redirects by
+# default, so a plain client.get("/analytics").status_code == 200 would
+# also pass against a guard that 307s a logged-out visitor to /login,
+# pinning nothing.
+
+ANALYTICS_EMPTY_PROMPT = "No mood data to analyse yet."
+
+
+def test_analytics_page_is_served_without_an_auth_guard(client) -> None:
+    """GET /analytics returns 200 to a logged-out visitor rather than redirecting to /login."""
+    response = client.get("/analytics", follow_redirects=False)
+
+    assert response.status_code == 200
+
+
+def test_analytics_page_shows_the_empty_prompt_when_logged_out(client) -> None:
+    """A logged-out visitor to /analytics sees FE-9a's empty-state prompt, not a chart."""
+    response = client.get("/analytics", follow_redirects=False)
+
+    assert ANALYTICS_EMPTY_PROMPT in response.text
+
+
+def test_root_page_links_to_analytics(client) -> None:
+    """The pad page links across to /analytics, making the analytics page reachable."""
+    assert _has_props(client, "/", href="/analytics")

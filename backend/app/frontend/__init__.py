@@ -16,18 +16,21 @@ This package is a pure HTTP client of the REST API defined in ``app.py``
 
 from nicegui import app
 
+from . import analytics as analytics_page
 from . import auth as auth_pages
 from . import history, journal, mood_pad
+
+QUADRANT_COLOURS: dict[str, str] = {
+    "high_energy_unpleasant": "#783020",
+    "high_energy_pleasant": "#e0c080",
+    "low_energy_unpleasant": "#98a8c0",
+    "low_energy_pleasant": "#a0a888",
+}
 
 
 def configure_theme() -> None:
     """Bind the circumplex quadrant colours into Quasar's brand palette."""
-    app.colors(
-        high_energy_unpleasant="#783020",
-        high_energy_pleasant="#e0c080",
-        low_energy_unpleasant="#98a8c0",
-        low_energy_pleasant="#a0a888",
-    )
+    app.colors(**QUADRANT_COLOURS)
 
 
 def create_pages() -> None:
@@ -36,3 +39,4 @@ def create_pages() -> None:
     auth_pages.create()
     history.create()
     journal.create()
+    analytics_page.create()

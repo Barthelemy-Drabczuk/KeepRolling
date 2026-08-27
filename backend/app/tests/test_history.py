@@ -185,3 +185,81 @@ def test_all_eight_labels_are_reachable_somewhere_on_the_pad() -> None:
     produced = {_quadrant_label()(energy, valence) for energy, valence in _pad_grid()}
 
     assert produced == ALL_LABELS
+
+
+# --- FE-9a: quadrant_label splits into classification + presentation ---------
+#
+# FE-9a's distribution chart needs the two halves separately: the bar
+# labels need snake_case -> Title Case without a mood to classify (the
+# category names arrive as the API payload's keys), and FE-9c's scatter
+# series need the snake_case identifier to look a colour up by. Neither
+# can be got from quadrant_label, which does both at once and returns
+# only the Title Case string.
+#
+# So quadrant_label becomes category_label(mood_category(energy, valence)),
+# with both halves public. This is behaviour-preserving: quadrant_label's
+# output is unchanged, so every test above -- and every mood_line /
+# mood_option_label test in tests/test_journal.py, which reach it through
+# frontend/journal.py's `from .history import quadrant_label` -- stays
+# green untouched.
+#
+# The alternative was a third copy of MC-1's anchor table inside
+# frontend/analytics.py. ARCHITECTURE.md's Boundaries rule sanctions
+# exactly *one* local mirror of analytics.get_mood_quadrant_name, so a
+# sibling import is the only correct answer here.
+
+SNAKE_CASE_CATEGORIES = {
+    "reckless_energy": RECKLESS_ENERGY,
+    "deep_despair": DEEP_DESPAIR,
+    "neutral": NEUTRAL,
+}
+
+
+def _mood_category() -> Callable[[float, float], str]:
+    """Return ``frontend.history.mood_category``."""
+    from frontend.history import mood_category
+
+    return mood_category
+
+
+def _category_label() -> Callable[[str], str]:
+    """Return ``frontend.history.category_label``."""
+    from frontend.history import category_label
+
+    return category_label
+
+
+@pytest.mark.parametrize(
+    ("energy", "valence", "expected"),
+    [
+        (0.50, -0.50, "reckless_energy"),
+        (-0.65, -0.65, "deep_despair"),
+        (0.0, 0.0, "neutral"),
+    ],
+)
+def test_mood_category_returns_the_snake_case_identifier(
+    energy: float, valence: float, expected: str
+) -> None:
+    """The classification half answers MC-1's identifier, not the display string.
+
+    Same arguments and same ``(energy, valence)`` order as ``quadrant_label``;
+    only the presentation is stripped off. Note the anchors are stored
+    ``(valence, energy)``, which is why the first case reads energy 0.50 /
+    valence -0.50 for the ``(-0.50, 0.50)`` anchor.
+    """
+    assert _mood_category()(energy, valence) == expected
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    sorted(SNAKE_CASE_CATEGORIES.items()),
+    ids=sorted(SNAKE_CASE_CATEGORIES),
+)
+def test_category_label_title_cases_a_snake_case_identifier(category: str, expected: str) -> None:
+    """The presentation half turns an identifier into its display label on its own.
+
+    It takes a category name rather than a mood, which is what lets FE-9a
+    label the distribution chart's x-axis from the API payload's keys
+    without inventing an (energy, valence) pair to classify.
+    """
+    assert _category_label()(category) == expected

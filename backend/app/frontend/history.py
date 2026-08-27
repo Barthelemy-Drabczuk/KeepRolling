@@ -41,19 +41,26 @@ _CAPTION_ANCHORS: dict[str, tuple[float, float]] = {  # (valence, energy)
 }
 
 
+def mood_category(energy: float, valence: float) -> str:
+    """Name the mood category an ``(energy, valence)`` pair falls in."""
+    if abs(energy) < 0.1 and abs(valence) < 0.1:
+        return "neutral"
+    return min(
+        _CAPTION_ANCHORS,
+        key=lambda name: (
+            (valence - _CAPTION_ANCHORS[name][0]) ** 2 + (energy - _CAPTION_ANCHORS[name][1]) ** 2
+        ),
+    )
+
+
+def category_label(category: str) -> str:
+    """Render a snake_case category identifier as its Title Case display label."""
+    return category.replace("_", " ").title()
+
+
 def quadrant_label(energy: float, valence: float) -> str:
     """Name the mood category an ``(energy, valence)`` pair falls in, Title Cased."""
-    if abs(energy) < 0.1 and abs(valence) < 0.1:
-        category = "neutral"
-    else:
-        category = min(
-            _CAPTION_ANCHORS,
-            key=lambda name: (
-                (valence - _CAPTION_ANCHORS[name][0]) ** 2
-                + (energy - _CAPTION_ANCHORS[name][1]) ** 2
-            ),
-        )
-    return category.replace("_", " ").title()
+    return category_label(mood_category(energy, valence))
 
 
 def _format_timestamp(raw: str) -> str:

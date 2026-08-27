@@ -170,3 +170,4 @@ def create() -> None:
         ui.button("Log this mood", color="high-energy-pleasant", on_click=log_mood)
         ui.link("History", "/history")
         ui.link("Journal", "/journal")
+        ui.link("Analytics", "/analytics")
