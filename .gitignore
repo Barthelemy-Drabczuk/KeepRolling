@@ -17,6 +17,7 @@ backend/app/.env
 .pytest_cache/
 .omc/
 .nicegui/
+.claude/qc.log
 
 # OS
 .DS_Store
