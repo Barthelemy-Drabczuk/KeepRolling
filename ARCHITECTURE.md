@@ -2186,3 +2186,448 @@ five required, result recorded in the commit message):
 Worth eyeballing during step 1: the compose form sits **above** the list, and
 the "No journal entries yet." string is unchanged for a fresh user with the
 form present.
+
+### FE-8c — Linking and displaying a mood on `/journal`
+
+No new component and **no new file**: `backend/app/frontend/journal.py` is again
+the only file that changes. `frontend/__init__.py`, `frontend/api.py`,
+`frontend/history.py`, `frontend/mood_pad.py`, `app.py`, the REST layer and
+`pyproject.toml` are untouched, and FE-8a's three plus FE-8b's four
+`test_frontend.py` tests keep passing unchanged — `JOURNAL_EMPTY`,
+`COMPOSE_LABEL`, `SAVE_CAPTION`, the `maxlength` prop and the unguarded
+`/journal` route are all left byte-identical.
+
+This item closes REQ-ENTRY-5's client half. Everything FE-8a and FE-8b settled
+(reading `app.storage.user` before the first `await`, inline `ui.label` for
+page-load failures vs. `ui.notify` for action failures, status-code-first and
+body-never, `params=` rather than a hand-built query string, `f"Bearer {token}"`
+inline pending FE-12, `@ui.refreshable` defined per page call) applies unchanged
+and is not restated. What is new is a **second GET on the page-load path**, a
+`ui.select` that is built empty and populated afterwards, one extra key in the
+POST body, and one extra conditional label per card.
+
+#### The module, literally (the whole updated `frontend/journal.py`)
+
+```python
+"""The journal entries page, at /journal.
+
+See ARCHITECTURE.md's FE-8a entry for the read-only listing, FE-8b's for
+the compose form, and FE-8c's for mood linking: why entry_list is defined
+inside the page function rather than at module scope, why validation runs
+before the request, why a successful save re-fetches the list instead of
+prepending the POST's own response body, and why the mood select is built
+empty and repopulated after the fetch rather than built once the moods are
+known.
+"""
+
+from datetime import datetime
+
+import httpx
+from nicegui import app, ui
+
+from . import api
+from .history import quadrant_label
+
+JOURNAL_EMPTY = "No journal entries yet."
+LOGIN_PROMPT = "Please log in to view your journal."  # page-load 401
+COMPOSE_LOGIN_PROMPT = "Please log in to write a journal entry."  # save 401
+GENERIC_FAILURE = "Could not complete the request."
+SAVE_SUCCESS = "Journal entry saved!"
+CONTENT_INVALID = "Journal entry must be between 1 and 5000 characters."
+COMPOSE_LABEL = "New journal entry"
+SAVE_CAPTION = "Save entry"
+MOOD_SELECT_LABEL = "Link a mood"
+NO_MOOD_OPTION = "No linked mood"
+CONTENT_MAX = 5000
+JOURNAL_LIMIT = 10
+MOOD_WINDOW = 100
+
+
+def _format_timestamp(raw: str) -> str:
+    """Render an EntryResponse's naive-UTC ISO timestamp as ``%Y-%m-%d %H:%M UTC``."""
+    return datetime.fromisoformat(raw).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def mood_option_label(mood: dict) -> str:
+    """Caption one mood in the "Link a mood" select: timestamp, em dash, quadrant."""
+    return (
+        f"{_format_timestamp(mood['timestamp'])} — "
+        f"{quadrant_label(mood['energy'], mood['valence'])}"
+    )
+
+
+def mood_line(mood: dict | None) -> str:
+    """Render an entry's linked mood as one card line; "" when nothing is linked."""
+    if mood is None:
+        return ""
+    energy = mood["energy"]
+    valence = mood["valence"]
+    return (
+        f"Mood: {quadrant_label(energy, valence)} "
+        f"(Energy: {energy:.2f} · Valence: {valence:.2f})"
+    )
+
+
+def _mood_options(moods: dict[int, dict]) -> dict:
+    """Build the select's ``{value: caption}`` map, with the ``None`` option first."""
+    options: dict = {None: NO_MOOD_OPTION}
+    options.update({mood_id: mood_option_label(mood) for mood_id, mood in moods.items()})
+    return options
+
+
+async def _fetch_entries(username: str, token: str) -> httpx.Response:
+    """GET the newest ``JOURNAL_LIMIT`` journal entries for ``username``."""
+    async with api.client() as http:
+        return await http.get(
+            f"/users/{username}/entries",
+            params={"limit": JOURNAL_LIMIT},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+async def _fetch_moods(username: str, token: str) -> httpx.Response:
+    """GET the newest ``MOOD_WINDOW`` moods for ``username``, for linking and display."""
+    async with api.client() as http:
+        return await http.get(
+            f"/users/{username}/moods",
+            params={"limit": MOOD_WINDOW},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+def create() -> None:
+    """Register the /journal page."""
+
+    @ui.page("/journal", title="Journal")
+    async def journal() -> None:
+        @ui.refreshable
+        def entry_list(entries: list[dict], moods: dict[int, dict]) -> None:
+            if entries:
+                with ui.column():
+                    for entry in entries:
+                        with ui.card():
+                            ui.label(_format_timestamp(entry["timestamp"]))
+                            ui.label(entry["content"])
+                            line = mood_line(moods.get(entry.get("mood_id")))
+                            if line:
+                                ui.label(line)
+            else:
+                ui.label(JOURNAL_EMPTY)
+
+        async def save_entry() -> None:
+            content = (compose.value or "").strip()
+            if not content or len(content) > CONTENT_MAX:
+                ui.notify(CONTENT_INVALID)
+                return
+            username = app.storage.user.get("username")
+            token = app.storage.user.get("token")
+            if not username or not token:
+                ui.notify(COMPOSE_LOGIN_PROMPT)
+                ui.navigate.to("/login")
+                return
+            payload: dict = {"content": content}
+            if mood_select.value is not None:
+                payload["mood_id"] = mood_select.value
+            async with api.client() as http:
+                response = await http.post(
+                    f"/users/{username}/entries",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if response.status_code == 201:
+                ui.notify(SAVE_SUCCESS)
+                compose.value = ""
+                mood_select.value = None
+                refreshed = await _fetch_entries(username, token)
+                if refreshed.status_code == 200:
+                    entry_list.refresh(refreshed.json(), moods)
+            elif response.status_code == 401:
+                ui.notify(COMPOSE_LOGIN_PROMPT)
+                ui.navigate.to("/login")
+            else:
+                ui.notify(GENERIC_FAILURE)
+
+        compose = ui.textarea(label=COMPOSE_LABEL)
+        compose.props(f"maxlength={CONTENT_MAX}")
+        mood_select = ui.select(_mood_options({}), label=MOOD_SELECT_LABEL, value=None)
+        ui.button(SAVE_CAPTION, color="high-energy-pleasant", on_click=save_entry)
+
+        moods: dict[int, dict] = {}
+        username = app.storage.user.get("username")
+        token = app.storage.user.get("token")
+        if not username or not token:
+            entry_list([], moods)
+            return
+
+        response = await _fetch_entries(username, token)
+        if response.status_code == 200:
+            mood_response = await _fetch_moods(username, token)
+            if mood_response.status_code == 200:
+                moods = {mood["id"]: mood for mood in mood_response.json()}
+                mood_select.set_options(_mood_options(moods))
+            entry_list(response.json(), moods)
+        elif response.status_code == 401:
+            ui.label(LOGIN_PROMPT)
+            ui.navigate.to("/login")
+        else:
+            ui.label(GENERIC_FAILURE)
+```
+
+Load-bearing details:
+
+- **The moods fetch is nested inside the entries fetch's `200` branch**, not
+  run alongside it. The row is explicit — "and only then". If the entries call
+  401s or 403s, the page has already committed to `LOGIN_PROMPT` /
+  `GENERIC_FAILURE` and (for 401) a navigation; a second call from there would
+  be a wasted round trip whose own failure branch would have to be suppressed
+  anyway. Sequential, not `asyncio.gather`: the second call is only meaningful
+  once the first succeeded, and both are in-process ASGI calls against sync
+  `def` endpoints (`get_entries` at `app.py:534`, `get_moods` at `app.py:300`),
+  which FastAPI runs in the threadpool, so two of them stay comfortably inside
+  NiceGUI's 3 s `response_timeout` (FE-7's finding).
+- **`MOOD_WINDOW = 100` is the endpoint's own default** — `get_moods` declares
+  `limit: int = 100` with no upper bound (read from `app.py:300-303`, not
+  recalled), so `params={"limit": MOOD_WINDOW}` is a no-op restatement that
+  documents the window at the call site instead of relying on a server default
+  that could change. It is deliberately *not* `history.HISTORY_LIMIT` (10):
+  that constant sizes a display table, this one sizes a lookup index, and
+  coupling them would silently shrink the linkable set to ten moods.
+- **The select is created empty, then repopulated with `set_options`.** It has
+  to be: FE-8b's rule is that the compose elements are built *before* the
+  storage check so a logged-out visitor sees the form and the form sits above
+  the list in the DOM — but the moods are only known after two awaits that a
+  logged-out visitor never reaches. Building the select after the fetch would
+  put it below the list and omit it entirely when logged out. All of this runs
+  inside the page-building coroutine, before the page's HTML is serialized, so
+  the populated options are in the *initial* render — there is no flicker and
+  no second paint.
+- **`_mood_options()` is the single construction path**, used for both the
+  empty select and the repopulated one, so the `None` option can never be
+  missing from one of them. It must stay first in the dict:
+  `ChoiceElement._update_values_and_labels` (nicegui 3.16.0,
+  `elements/choice_element.py:40-42`) takes `list(options.keys())` in insertion
+  order and `_update_options` renders `{'value': <index>, 'label': ...}` pairs
+  from it, so "No linked mood" being key `None` inserted first is what makes it
+  option zero.
+- **`value=None` is passed explicitly and is a real option, not an absence.**
+  `ChoiceElement.__init__`'s guard is `value is not None and value not in
+  self._values`, so `None` never raises regardless of the options — but
+  `Select._value_to_model_value` does `self._values.index(value)` and returns
+  `None` on `ValueError`, i.e. a select whose options did *not* contain the
+  `None` key would render with a **blank** display rather than the "No linked
+  mood" caption the row requires. Passing it explicitly also sidesteps
+  `resolve_defaults`: the parameter's declared default is
+  `DEFAULT_PROPS['model-value'] | None`, a sentinel that a future
+  `ui.select.default_props('model-value', ...)` could redirect; an explicit
+  argument is not a sentinel and is used as-is (`defaults.py:53-64`).
+- **`mood_select.value` is the mood's `id` or `None`, never a caption or an
+  index.** `Select._event_args_to_value` maps the browser's
+  `e.args['value']` index back through `self._values`, which are the dict's
+  *keys* (`elements/select.py:113-121`). That is why the options dict is keyed
+  by `mood["id"]` and why `save_entry` can use the value directly.
+- **`mood_id` is added to the body or omitted entirely — never sent as
+  `null`.** `if mood_select.value is not None: payload["mood_id"] = ...`. Both
+  forms happen to behave identically server-side today (`EntryCreate.mood_id`
+  is `int | None = None`, and `create_entry` only validates ownership `if
+  entry.mood_id is not None`, `app.py:507-517`), but the row specifies
+  omission, and building the dict conditionally is what keeps a future
+  `model_config` change or a stricter schema from turning an unlinked entry
+  into a 422. Note the ownership check: a `mood_id` the user does not own comes
+  back **404**, which lands in `save_entry`'s generic `else` branch — correct,
+  and unreachable from the UI since every option came from that user's own
+  moods.
+- **A successful save resets the select to `None` alongside clearing the
+  textarea.** The row does not enumerate this (it names only the textarea
+  clear, inherited from FE-8b) — it is a design call made here, on the same
+  footing as FE-8b's "a failed refresh-fetch is silent". Without it, the next
+  entry silently inherits the previous entry's mood link, which is a data
+  error the user has no visual cue for once the notification fades. Setting
+  `.value = None` is safe because `None` is a key of the options dict, so the
+  display returns to "No linked mood" rather than going blank.
+- **No moods re-fetch after a save.** Saving a journal entry cannot create a
+  mood, so the index is still current; `entry_list.refresh(refreshed.json(),
+  moods)` reuses the dict built at page load. Consequence, accepted: a mood
+  logged in another tab after this page loaded is not in the select until
+  reload. One more round trip per save to fix a case the row does not mention
+  is not worth it.
+- **`entry_list` takes two positional parameters and every call site passes
+  both positionally.** `_execute_refresh` re-raises a `TypeError` if the
+  initial call and `refresh()` mix positional and keyword styles, and
+  `target.args = args or target.args` is what makes the refresh render the new
+  data (FE-8b's finding). `entry_list([], moods)`, `entry_list(entries,
+  moods)`, `entry_list.refresh(refreshed.json(), moods)` — three call sites,
+  one style.
+- **`moods` is rebound in the page function and only *read* by the closures.**
+  `save_entry` and `entry_list` resolve it at call time, so the rebinding after
+  the fetch is visible to both; the `moods: dict[int, dict] = {}` initializer
+  before the storage check is what keeps the logged-out `entry_list([], moods)`
+  call and any click that follows it from hitting a `NameError`. Do not add an
+  assignment to `moods` inside `save_entry` — Python would make it local there
+  and break the read (the same shadowing mechanic FE-8b relies on deliberately
+  for `username`/`token`).
+- **The third label is created only when `mood_line` returns a non-empty
+  string**, inside the card, after content. `moods.get(entry.get("mood_id"))`
+  collapses all three "no mood line" cases into one lookup: `mood_id` is
+  `null` (never linked, or unlinked by REQ-ENTRY-6's mood deletion, which nulls
+  the FK rather than cascading), or `mood_id` is set but outside the 100-mood
+  window (`.get` returns `None`). `moods.get(None)` is `None` because the raw
+  index — unlike `_mood_options`'s output — has no `None` key. FE-8a's "exactly
+  two labels, timestamp first" contract is what makes appending this third one
+  land at the bottom of the card rather than in the middle.
+- **`quadrant_label` is imported from `frontend/history.py`, not copied.**
+  `frontend/__init__.py`'s docstring forbids importing `models`, `database`,
+  `auth` and `analytics` — a sibling import inside the `frontend` package is
+  not that, and there is no cycle (`history.py` imports only `api`). See the
+  flag below on why `_format_timestamp` nonetheless stays duplicated.
+- **Both non-ASCII separators are load-bearing and pinned by tests**: the em
+  dash `—` (U+2014) in `mood_option_label`, the middle dot `·` (U+00B7) in
+  `mood_line`, the latter matching `mood_pad._readout`'s existing
+  `f"Energy: {energy:.2f} · Valence: {valence:.2f}"`. Do not "normalize" either
+  to a hyphen or a pipe. Both f-strings are split across two implicitly
+  concatenated lines because a single line lands at exactly the 100-character
+  `line-length` limit — splitting keeps `ruff format` from having an opinion.
+- **`{value:.2f}` rounds, it does not truncate** — `0.666` renders `0.67`,
+  which two of the unit tests pin. Latent cosmetic edge: a value in
+  `(-0.005, 0)` renders `-0.00`. Unreachable in practice (the pad rounds to two
+  decimals before POSTing, per FE-6a's `nudge`), so it is noted, not designed
+  around.
+
+#### One helper imported, one still duplicated — deliberate, and worth a look
+
+FE-8a's entry argued that if `_format_timestamp` were ever pulled out, the home
+should be a shared `frontend/format.py`, "not `history.py` (journal importing
+display helpers *from the history page module* would invert the dependency
+between two sibling pages)". FE-8c's row nonetheless mandates exactly that
+import for `quadrant_label`, so `journal.py` now depends on `history.py` while
+still keeping its own copy of `_format_timestamp`. The asymmetry is real but
+defensible: `quadrant_label` is public, non-trivial (five branches and a
+neutral band that must not drift from `analytics.get_mood_quadrant_name`), and
+pinned by `tests/test_history.py`, so a second copy would be a genuine
+correctness risk; `_format_timestamp` is a private two-liner, and importing an
+`_`-prefixed name across modules is worse than duplicating it. The consequence
+to record: `frontend.journal → frontend.history` is now a live edge between two
+page modules. If a third page needs either helper — or if that edge starts
+carrying anything else — the answer is `frontend/format.py` holding both
+`quadrant_label` and `format_timestamp`, with `history.py` and `journal.py`
+importing from it. That refactor is not in FE-8c's row and is not bundled here.
+
+#### Known limitation, accepted by the requirement
+
+**A mood older than the user's newest 100 renders no mood line, silently.** The
+page pairs a 10-entry window with a 100-mood window, so this needs a user who
+logged 100+ moods *after* the mood in question while writing 10 or fewer
+journal entries. The alternatives are worse: an N+1
+`GET /users/{u}/moods/{mood_id}` per card (explicitly out of scope in FE-8a and
+here), or a wider window that grows the page payload for every visitor. If it
+ever bites, the fix is a server-side change — embedding the mood in
+`EntryResponse` — which is a new requirement against the REST layer, not a
+frontend patch.
+
+#### Graceful degradation, and why it shows nothing
+
+If the entries fetch succeeded but the moods fetch returns non-2xx, the page
+renders the list with no mood lines and a select holding only "No linked mood",
+and says nothing. That is the row's wording and it is right: the user asked to
+see their journal, and they are seeing it; a "Could not complete the request."
+banner over a correctly rendered list would misreport the outcome the same way
+FE-8b's silent refresh failure would have. The degraded state is also
+self-describing — an empty mood dropdown is visibly not a working dropdown.
+Note that this branch is nearly unreachable in practice, since both calls use
+the same username and token against the same in-process API; the realistic
+trigger is a 30-minute token expiring *between* the two awaits.
+
+#### Note for FE-12
+
+`journal.py` now has **three** `f"Bearer {token}"` sites (`_fetch_entries`,
+`_fetch_moods`, `save_entry`), so FE-12's `api.auth_headers(token)` extraction
+covers five call sites across three modules. Still written inline here for the
+same reason as FE-8a/FE-8b.
+
+Second, smaller trigger worth recording: `GET /users/{u}/moods` now has **two**
+call sites in two page modules (`history.history()` and
+`journal._fetch_moods()`), with different windows. That is two, not three, and
+the two windows differ in purpose, so nothing is extracted now — but if a third
+page needs moods, the extraction is an `api.get_moods(username, token, limit)`
+helper in `frontend/api.py`, *not* an import from `history.py`.
+
+Out of scope, deliberately: changing or removing an existing entry's mood link
+after it is saved; unlinking from the UI; any per-entry
+`GET /users/{u}/moods/{mood_id}` fetch; widening `JOURNAL_LIMIT`;
+re-fetching moods after a save; editing or deleting an entry; disabling the
+button during the request; pagination/"load more"; any auth guard on
+`/journal`; any change to `frontend/api.py`, `frontend/history.py`,
+`frontend/mood_pad.py`, `frontend/__init__.py`, `app.py` or the REST layer.
+
+**Traceability:** FE-8c → the public `mood_option_label()` and `mood_line()`
+functions, the private `_mood_options()` helper and the `_fetch_moods()`
+coroutine at module scope in `backend/app/frontend/journal.py`, plus, inside
+`frontend.journal.create()`'s `journal()` page, the
+`ui.select(label="Link a mood")` between the textarea and the Save button, the
+conditional third `ui.label` in `entry_list()`, and the conditional
+`"mood_id"` key in `save_entry()`'s POST body. Requirement: `TASKS.md`'s
+**FE-8c** row (epic "NiceGUI frontend redesign"), closing REQ-ENTRY-5's client
+half. Third and final part of the FE-8 split.
+
+**Automated slice** — exactly the six unit tests already written (and confirmed
+red with `ImportError`) in `backend/app/tests/test_journal.py`, the first tests
+this module has:
+
+- `test_mood_line_is_empty_when_no_mood_is_linked` — `None` → `""`, which is
+  what makes the third label conditional rather than blank-but-present.
+- `test_mood_line_names_the_quadrant_and_both_coordinates` — the exact string
+  `"Mood: High Energy Pleasant (Energy: 0.80 · Valence: 0.60)"`.
+- `test_mood_line_calls_a_near_origin_mood_neutral` — `(0.05, -0.05)` reads
+  `"Neutral"`, pinning the delegation to `quadrant_label`'s neutral band rather
+  than a re-derived one.
+- `test_mood_line_pads_coordinates_to_two_decimals` and
+  `test_mood_line_rounds_coordinates_to_two_decimals` — `0.5` → `0.50`,
+  `0.666` → `0.67`.
+- `test_mood_option_label_joins_the_formatted_timestamp_and_quadrant` — the
+  exact string `"2026-08-27 09:00 UTC — High Energy Pleasant"`.
+
+**No new `test_frontend.py` test in this item.** A `client`-fixture assertion
+that `GET /journal` renders `label="Link a mood"` would be legitimate and cheap
+(FE-8b's textarea test in miniature), but the accepted row's verification slice
+is the unit tests plus manual acceptance, and adding a seventh test now would
+mean writing it outside the red-green gate. `POST /users/{u}/entries` with a
+`mood_id`, including the 404-on-someone-else's-mood path, is already covered by
+`tests/test_entries.py` (REQ-ENTRY-5) — do not re-test it through the UI, and
+do not reach for the banned NiceGUI fixtures to drive the select.
+
+**Manual slice** (dev server from `backend/app/`, per the Testing policy; all
+five required, result recorded in the commit message):
+
+1. *Select population* — logged in with at least three moods logged from `/`,
+   open `/journal` and open the "Link a mood" dropdown. Confirm: the field
+   shows **"No linked mood"** before it is touched; that same entry is the
+   first option; below it, one option per mood, **newest first**, each reading
+   like `2026-08-27 09:00 UTC — High Energy Pleasant`. Log one mood at the pad's
+   untouched origin first and confirm its option reads `— Neutral`, not a
+   quadrant name.
+2. *`mood_id` reaches the POST body* — pick a mood, type content, click "Save
+   entry", and confirm in the browser's network tab that the request body is
+   `{"content": "…", "mood_id": <that mood's id>}`; the new top card shows a
+   **third** line `Mood: <quadrant> (Energy: 0.42 · Valence: -0.13)` matching
+   the mood picked; and the select has snapped back to "No linked mood".
+3. *Omission, not `null`* — immediately save a second entry **without** touching
+   the select, and confirm the network tab shows a body of `{"content": "…"}`
+   with **no `mood_id` key at all** (not `"mood_id": null`), and that the new
+   card has exactly two labels.
+4. *Null and outside-window cases* — hard-reload `/journal` and confirm the
+   linked entry from step 2 still shows its third line (i.e. it came from the
+   API, not from client state). Then delete that mood via `/docs`
+   (`DELETE /users/{username}/moods/{mood_id}`, which nulls `mood_id` per
+   REQ-ENTRY-6 rather than deleting the entry), reload, and confirm the entry is
+   still listed with **two** labels, no third line, no error message, and no
+   traceback in the server log.
+5. *Degradation branch* — temporarily set `MOOD_WINDOW = "abc"` in
+   `frontend/journal.py` so the moods fetch alone comes back 422 while the
+   entries fetch still succeeds. Reload `/journal` and confirm: the entry cards
+   render normally **with no mood lines at all**, the select offers only "No
+   linked mood", and **no** error message appears anywhere on the page. Restore
+   `MOOD_WINDOW = 100` before staging anything.
+
+Worth eyeballing during step 1: the select sits **between** the textarea and
+the "Save entry" button, and in a fresh private window (logged out) `/journal`
+still shows the textarea, the select with its single "No linked mood" option,
+the button, and "No journal entries yet.".
