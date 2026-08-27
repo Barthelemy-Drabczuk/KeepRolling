@@ -30,9 +30,12 @@ raises ``TypeError: ... unexpected keyword argument 'days'`` before the mood
 loop is ever reached. Both PDF tests below are therefore red on that TypeError
 first and on KD-1's AttributeError second; REQ-EXPORT-3 needs both fixed.
 
-Quadrant values used here avoid ``energy == 0.0``/``valence == 0.0`` for the
-same reason ``test_analytics.py`` does: the classifier has no branch for
-exactly zero, and no requirement covers that case.
+The exported label is whatever REQ-ANALYTICS-5's 8-category classifier returns:
+``neutral`` inside the central ``abs(energy) < 0.1 and abs(valence) < 0.1``
+band, otherwise the nearest of seven fixed ``(valence, energy)`` caption
+anchors by straight-line distance. The expected labels in ``QUADRANT_CASES``
+below are computed from those anchors rather than from the four-quadrant names
+the classifier previously returned.
 """
 
 import csv
@@ -42,12 +45,14 @@ import pytest
 
 EXPORT_PATHS = ["csv", "json", "pdf"]
 
-# (energy, valence, expected quadrant label) per analytics.get_mood_quadrant_name
+# (energy, valence, expected category label) per analytics.get_mood_quadrant_name.
+# The middle three sit exactly on a caption anchor; the first is nearest the
+# (0.45, 0.35) anchor; the last is inside the neutral band.
 QUADRANT_CASES = [
-    (0.5, 0.5, "high_energy_pleasant"),
-    (0.5, -0.5, "high_energy_unpleasant"),
-    (-0.5, 0.5, "low_energy_pleasant"),
-    (-0.5, -0.5, "low_energy_unpleasant"),
+    (0.5, 0.5, "energetic_optimism"),
+    (0.5, -0.5, "reckless_energy"),
+    (-0.5, 0.5, "relaxed_contentment"),
+    (-0.5, -0.5, "sinking_despair"),
     (0.05, 0.05, "neutral"),
 ]
 
@@ -216,7 +221,7 @@ def test_json_included_entry_reports_its_linked_moods_quadrant_label(client, aut
 
     assert response.status_code == 200, response.text
     entries = {entry["content"]: entry for entry in response.json()["entries"]}
-    assert entries["linked entry"]["mood"] == "high_energy_pleasant"
+    assert entries["linked entry"]["mood"] == "energetic_optimism"
 
 
 def test_json_included_entry_without_a_linked_mood_has_no_mood_label(client, auth_headers):

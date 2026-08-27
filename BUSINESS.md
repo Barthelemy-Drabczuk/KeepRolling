@@ -105,9 +105,12 @@ under "Open Questions" rather than guessed into a REQ.
 - **REQ-ANALYTICS-2**: `GET /users/{username}/analytics/patterns` shall
   report time-of-day averages, day-of-week averages, a volatility
   classification (low/moderate/high), and streaks of 3 or more
-  consecutive same-quadrant moods, computed over the trailing `days`
+  consecutive same-category moods, computed over the trailing `days`
   query parameter (default 30), for the authenticated caller's own moods
-  only (403 otherwise).
+  only (403 otherwise). "Category" is one of the 8 values
+  `analytics.get_mood_quadrant_name` returns (see `elm/REQUIREMENTS.md`'s
+  REQ-ANALYTICS-5) — only 4 of the 8 are true energy/valence quadrants,
+  so this requirement no longer uses "quadrant" as of that change.
 - **REQ-ANALYTICS-3**: `GET /users/{username}/analytics/patterns` shall
   report `patterns_detected: false` with an explanatory message, rather
   than computing patterns, when fewer than 7 moods fall in the requested
@@ -122,20 +125,20 @@ under "Open Questions" rather than guessed into a REQ.
 - **REQ-EXPORT-1**: `GET /users/{username}/export/csv` shall return the
   authenticated caller's own moods (403 otherwise) as a downloadable CSV
   attachment, one row per mood, with columns Timestamp, Mood (the
-  quadrant label derived from energy/valence, e.g. `high_energy_pleasant`
+  category label derived from energy/valence, e.g. `energetic_optimism`
   — not a stored value), Energy, Valence, and Notes.
 - **REQ-EXPORT-2**: `GET /users/{username}/export/json` shall return the
-  authenticated caller's own moods (timestamp, derived quadrant-label
+  authenticated caller's own moods (timestamp, derived category-label
   `mood`, energy, valence, notes) as a downloadable JSON attachment,
   optionally including entries (`include_entries=true`; each entry's
-  timestamp, content, and `mood` — the quadrant label of the entry's
+  timestamp, content, and `mood` — the category label of the entry's
   linked mood if it has one via `mood_id`, else `null`), filterable by
   `start_date`/`end_date`.
 - **REQ-EXPORT-3**: `GET /users/{username}/export/pdf` shall return a PDF
   report containing the caller's mood statistics (respecting the same
   `start_date`/`end_date` filter as the history table below it, not the
   caller's entire history regardless of filter) and a table of their most
-  recent mood history with the same derived quadrant-label `Mood` column
+  recent mood history with the same derived category-label `Mood` column
   as REQ-EXPORT-1.
 - **REQ-EXPORT-4**: All three export endpoints shall accept optional
   `start_date`/`end_date` query parameters in `YYYY-MM-DD` format and

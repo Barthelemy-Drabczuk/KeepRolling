@@ -1,12 +1,15 @@
-"""Tests for REQ-ANALYTICS-1..4 (see BUSINESS.md).
+"""Tests for REQ-ANALYTICS-1..4 (see BUSINESS.md) and REQ-ANALYTICS-5 (see
+``elm/REQUIREMENTS.md``).
 
-All of these are characterization tests: the three analytics endpoints in
-``app.py`` and the pure functions they delegate to in ``analytics.py`` are
-already implemented, so every test here is expected to pass as written.
+The REQ-ANALYTICS-1..4 tests are characterization tests: the three analytics
+endpoints in ``app.py`` and the pure functions they delegate to in
+``analytics.py`` are already implemented, so those are expected to pass as
+written. The REQ-ANALYTICS-5 section at the end of this file is not — it
+specifies the 8-category classifier that replaces the previous 5-category one.
 
-Everything is exercised through the HTTP endpoints rather than by importing
-``analytics.py`` directly, so the auth/ownership checks in ``app.py`` are part
-of what is pinned down.
+Everything except that last section is exercised through the HTTP endpoints
+rather than by importing ``analytics.py`` directly, so the auth/ownership
+checks in ``app.py`` are part of what is pinned down.
 
 Two conventions the tests below depend on:
 
@@ -20,16 +23,21 @@ Two conventions the tests below depend on:
 * ``/analytics/statistics`` has no implicit window, so tests for it can and do
   use fixed calendar dates.
 
-Test data deliberately avoids ``energy == 0.0`` and ``valence == 0.0``: the
-quadrant classifier in ``analytics.py`` tests ``energy > 0`` / ``energy < 0``
-with no branch for exactly zero, so a mood at zero energy falls through to
-``low_energy_unpleasant``. That is not something any REQ-ANALYTICS-* statement
-covers, so it is left unpinned here rather than frozen into a test.
+Category labels in this file follow REQ-ANALYTICS-5's 8-category classifier:
+``neutral`` for the central ``abs(energy) < 0.1 and abs(valence) < 0.1`` band,
+otherwise the nearest of seven fixed ``(valence, energy)`` caption anchors by
+straight-line distance. Expected labels below are computed from those anchors,
+not from the four-quadrant names the classifier used previously — e.g. a mood
+at ``energy=0.5, valence=0.5`` is nearest to the ``(0.45, 0.35)`` anchor and so
+classifies as ``energetic_optimism``, and ``energy=-0.5, valence=-0.5`` sits
+exactly on the ``(-0.50, -0.50)`` anchor and so classifies as
+``sinking_despair``.
 """
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from analytics import get_mood_quadrant_name
 
 # ==================== helpers ====================
 
@@ -269,9 +277,9 @@ def test_statistics_also_reports_quadrants_trends_and_most_common_mood(client, a
     body = client.get("/users/alice/analytics/statistics", headers=headers).json()
 
     quadrants = body["quadrant_distribution"]
-    assert quadrants["high_energy_pleasant"] == {"count": 3, "percentage": 100.0}
+    assert quadrants["energetic_optimism"] == {"count": 3, "percentage": 100.0}
     assert body["trends"]["overall_trend"] == "stable"
-    assert body["most_common_mood"]["quadrant"] == "high_energy_pleasant"
+    assert body["most_common_mood"]["quadrant"] == "energetic_optimism"
 
 
 # ==================== REQ-ANALYTICS-2 ====================
@@ -386,7 +394,7 @@ def test_patterns_classifies_volatility(client, auth_headers, energies, valences
 def test_patterns_reports_a_streak_of_three_or_more_same_quadrant_moods(client, auth_headers):
     """REQ-ANALYTICS-2: consecutive moods in one quadrant are reported as a streak."""
     headers = auth_headers("alice")
-    # Oldest first: 4 high-energy-pleasant, then 4 low-energy-unpleasant.
+    # Oldest first: 4 energetic-optimism moods, then 4 sinking-despair ones.
     timestamps = _create_moods_in_window(
         client,
         headers,
@@ -399,12 +407,12 @@ def test_patterns_reports_a_streak_of_three_or_more_same_quadrant_moods(client, 
 
     assert streaks["total_streaks"] == 2
     assert streaks["streaks"][0] == {
-        "quadrant": "high_energy_pleasant",
+        "quadrant": "energetic_optimism",
         "duration_entries": 4,
         "start_date": timestamps[0].isoformat(),
         "end_date": timestamps[3].isoformat(),
     }
-    assert streaks["streaks"][1]["quadrant"] == "low_energy_unpleasant"
+    assert streaks["streaks"][1]["quadrant"] == "sinking_despair"
 
 
 def test_patterns_reports_no_streak_for_a_run_of_only_two(client, auth_headers):
@@ -660,3 +668,106 @@ def test_insights_for_another_username_returns_403(client, auth_headers, make_us
     response = client.get("/users/bob/analytics/insights", headers=headers)
 
     assert response.status_code == 403
+
+
+# ==================== REQ-ANALYTICS-5: 8-category classification ====================
+#
+# Unlike everything above, this section calls ``analytics.get_mood_quadrant_name``
+# directly rather than through an endpoint: the classifier is a pure function of
+# two floats, and the grid check below evaluates it ~10,000 times, which is not
+# something to route through HTTP. The endpoint-level consequences of the new
+# category set stay pinned by the REQ-ANALYTICS-1/2 tests above and by
+# ``test_export.py``.
+
+# The seven caption anchors, in ``(valence, energy)`` — each caption's existing
+# position on the mood pad. ``neutral`` is the eighth category and is not
+# anchor-based: it is the central band, carved out before any distance is
+# measured.
+CAPTION_ANCHORS = {
+    "reckless_energy": (-0.50, 0.50),  # "Fuck it we ball"
+    "energetic_optimism": (0.45, 0.35),  # "We are so fucking back"
+    "peak_excitement": (0.60, 0.65),  # "Let's fucking goooo"
+    "resigned_acceptance": (-0.35, -0.35),  # "It is what it is"
+    "sinking_despair": (-0.50, -0.50),  # "It's so over"
+    "deep_despair": (-0.65, -0.65),  # "Mom would be sad"
+    "relaxed_contentment": (0.50, -0.50),  # "We vibing"
+}
+
+ALL_CATEGORIES = set(CAPTION_ANCHORS) | {"neutral"}
+
+
+def _pad_grid(step=0.02):
+    """Every ``(energy, valence)`` point on a fine grid over [-1, 1] x [-1, 1]."""
+    axis = [round(-1.0 + index * step, 10) for index in range(int(2 / step) + 1)]
+    return [(energy, valence) for energy in axis for valence in axis]
+
+
+@pytest.mark.parametrize(
+    ("category", "anchor"), sorted(CAPTION_ANCHORS.items()), ids=sorted(CAPTION_ANCHORS)
+)
+def test_each_caption_anchor_point_classifies_as_its_own_category(category, anchor):
+    """REQ-ANALYTICS-5: a mood logged exactly at a caption's anchor point gets
+    that caption's category."""
+    valence, energy = anchor
+
+    assert get_mood_quadrant_name(energy, valence) == category
+
+
+@pytest.mark.parametrize(
+    ("energy", "valence"),
+    [(0.0, 0.0), (0.05, 0.05), (0.099, -0.099), (-0.099, 0.099)],
+)
+def test_the_central_band_is_neutral(energy, valence):
+    """REQ-ANALYTICS-5: the ``abs(energy) < 0.1 and abs(valence) < 0.1`` band is
+    neutral, unchanged from the previous 5-category classifier."""
+    assert get_mood_quadrant_name(energy, valence) == "neutral"
+
+
+@pytest.mark.parametrize(("energy", "valence"), [(0.1, 0.0), (0.0, 0.1), (-0.1, 0.0)])
+def test_the_neutral_band_boundary_is_exclusive(energy, valence):
+    """REQ-ANALYTICS-5: 0.1 itself is outside the neutral band (strict ``<``), so
+    a point on the edge is classified by nearest anchor instead."""
+    assert get_mood_quadrant_name(energy, valence) != "neutral"
+
+
+@pytest.mark.parametrize(
+    ("energy", "valence", "expected"),
+    [(0.5, 0.5, "energetic_optimism"), (0.75, 0.75, "peak_excitement")],
+)
+def test_two_anchors_in_one_quadrant_are_told_apart_by_distance(energy, valence, expected):
+    """REQ-ANALYTICS-5: classification is per-anchor, not per-quadrant — two
+    points in the same quadrant resolve to different categories."""
+    assert get_mood_quadrant_name(energy, valence) == expected
+
+
+@pytest.mark.parametrize(
+    ("energy", "valence", "expected"),
+    [(0.5, 0.0, "energetic_optimism"), (0.0, -0.5, "resigned_acceptance")],
+)
+def test_a_point_on_an_axis_is_classified_by_distance(energy, valence, expected):
+    """REQ-ANALYTICS-5: a point with a zero coordinate lands on its nearest
+    anchor like any other point — the old classifier's catch-all ``else``, which
+    swept these into ``low_energy_unpleasant``, is gone."""
+    assert get_mood_quadrant_name(energy, valence) == expected
+
+
+def test_every_point_on_the_pad_resolves_to_one_of_the_eight_categories():
+    """REQ-ANALYTICS-5: the categories tessellate the whole [-1, 1] x [-1, 1]
+    square — no point anywhere on the pad is unclassified or raises."""
+    # Keyed by the offending label, valued by one point that produced it, so a
+    # failure names the label rather than dumping every grid point.
+    unexpected = {}
+    for energy, valence in _pad_grid():
+        category = get_mood_quadrant_name(energy, valence)
+        if category not in ALL_CATEGORIES:
+            unexpected.setdefault(category, (energy, valence))
+
+    assert unexpected == {}
+
+
+def test_all_eight_categories_are_reachable_somewhere_on_the_pad():
+    """REQ-ANALYTICS-5: each of the 8 categories owns a non-empty region — none
+    is shadowed entirely by its neighbours."""
+    produced = {get_mood_quadrant_name(energy, valence) for energy, valence in _pad_grid()}
+
+    assert produced == ALL_CATEGORIES

@@ -80,44 +80,30 @@ def calculate_mood_statistics(
     return stats
 
 
-def calculate_quadrant_distribution(moods: List[MoodModel]) -> Dict[str, int]:
+def calculate_quadrant_distribution(moods: List[MoodModel]) -> Dict[str, Dict[str, float]]:
     """
-    Calculate the distribution of moods across emotional quadrants.
-    
+    Calculate the distribution of moods across emotional categories.
+
     Args:
         moods: List of mood entries
-        
+
     Returns:
-        Dictionary with quadrant names and counts
+        Dictionary with category names and counts
     """
-    quadrants = {
-        "high_energy_pleasant": 0,      # Top right
-        "high_energy_unpleasant": 0,    # Top left
-        "low_energy_pleasant": 0,       # Bottom right
-        "low_energy_unpleasant": 0,     # Bottom left
-        "neutral": 0
-    }
-    
+    categories = {name: 0 for name in (*_CAPTION_ANCHORS, "neutral")}
+
     for mood in moods:
-        if abs(mood.energy) < 0.1 and abs(mood.valence) < 0.1:
-            quadrants["neutral"] += 1
-        elif mood.energy > 0 and mood.valence > 0:
-            quadrants["high_energy_pleasant"] += 1
-        elif mood.energy > 0 and mood.valence < 0:
-            quadrants["high_energy_unpleasant"] += 1
-        elif mood.energy < 0 and mood.valence > 0:
-            quadrants["low_energy_pleasant"] += 1
-        else:
-            quadrants["low_energy_unpleasant"] += 1
-    
+        category = get_mood_quadrant_name(mood.energy, mood.valence)
+        categories[category] += 1
+
     # Calculate percentages
     total = len(moods)
-    quadrants_pct = {
+    categories_pct = {
         k: {"count": v, "percentage": round((v / total) * 100, 2)}
-        for k, v in quadrants.items()
+        for k, v in categories.items()
     }
-    
-    return quadrants_pct
+
+    return categories_pct
 
 
 def calculate_trends(moods: List[MoodModel]) -> Dict:
@@ -211,27 +197,26 @@ def get_most_common_mood(moods: List[MoodModel]) -> Dict:
     }
 
 
+_CAPTION_ANCHORS: dict[str, tuple[float, float]] = {
+    "reckless_energy": (-0.50, 0.50),      # Fuck it we ball
+    "energetic_optimism": (0.45, 0.35),    # We are so fucking back
+    "peak_excitement": (0.60, 0.65),       # Let's fucking goooo
+    "resigned_acceptance": (-0.35, -0.35), # It is what it is
+    "sinking_despair": (-0.50, -0.50),     # It's so over
+    "deep_despair": (-0.65, -0.65),        # Mom would be sad
+    "relaxed_contentment": (0.50, -0.50),  # We vibing
+}
+
+
 def get_mood_quadrant_name(energy: float, valence: float) -> str:
-    """
-    Get the quadrant name for given energy/valence values.
-    
-    Args:
-        energy: Energy level (-1 to 1)
-        valence: Valence level (-1 to 1)
-        
-    Returns:
-        Quadrant name string
-    """
+    """Name the mood category an ``(energy, valence)`` pair falls in."""
     if abs(energy) < 0.1 and abs(valence) < 0.1:
         return "neutral"
-    elif energy > 0 and valence > 0:
-        return "high_energy_pleasant"
-    elif energy > 0 and valence < 0:
-        return "high_energy_unpleasant"
-    elif energy < 0 and valence > 0:
-        return "low_energy_pleasant"
-    else:
-        return "low_energy_unpleasant"
+    return min(
+        _CAPTION_ANCHORS,
+        key=lambda name: (valence - _CAPTION_ANCHORS[name][0]) ** 2
+        + (energy - _CAPTION_ANCHORS[name][1]) ** 2,
+    )
 
 
 def detect_mood_patterns(
