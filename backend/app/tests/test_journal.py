@@ -15,6 +15,16 @@ below are taken from that function's actual behavior as pinned by
 ``tests/test_history.py``: Title Case with spaces, and a "Neutral" band of
 ``abs(energy) < 0.1 and abs(valence) < 0.1`` (strictly ``<``).
 
+MC-2 (REQ-UI-1) changed that function from a 5-category quadrant chain to
+the 8-category nearest-anchor classifier MC-1 put in ``analytics.py``, so
+the category names below moved with it — neither function's own code
+changed. Each fixture point's expected label is derived from the anchor
+table in ``tests/test_history.py``'s docstring, not carried over: the
+(0.80, 0.60) mood is nearest ``peak_excitement`` (0.60, 0.65), and both
+coordinate-formatting moods — (0.50, -0.20) and (0.666, -0.334) — are
+nearest ``reckless_energy`` (-0.50, 0.50). The near-origin mood is
+inside the unchanged Neutral band.
+
 Everything else in FE-8c — the ``ui.select``'s population, ``mood_id``
 reaching the POST body, the third card label, the ``null``/outside-window
 cases, and the moods-fetch degradation branch — is
@@ -36,7 +46,7 @@ from typing import Callable
 
 # A MoodResponse-shaped payload as the API returns it: naive-UTC ISO
 # timestamp, floats in -1.0..1.0, optional notes.
-HIGH_ENERGY_PLEASANT_MOOD = {
+PEAK_EXCITEMENT_MOOD = {
     "id": 7,
     "timestamp": "2026-08-27T09:00:00",
     "energy": 0.80,
@@ -75,23 +85,22 @@ def test_mood_line_is_empty_when_no_mood_is_linked() -> None:
     assert _mood_line()(None) == ""
 
 
-def test_mood_line_names_the_quadrant_and_both_coordinates() -> None:
-    """A linked mood renders as "Mood: <quadrant> (Energy: e · Valence: v)"."""
+def test_mood_line_names_the_category_and_both_coordinates() -> None:
+    """A linked mood renders as "Mood: <category> (Energy: e · Valence: v)"."""
     assert (
-        _mood_line()(HIGH_ENERGY_PLEASANT_MOOD)
-        == "Mood: High Energy Pleasant (Energy: 0.80 · Valence: 0.60)"
+        _mood_line()(PEAK_EXCITEMENT_MOOD) == "Mood: Peak Excitement (Energy: 0.80 · Valence: 0.60)"
     )
 
 
 def test_mood_line_calls_a_near_origin_mood_neutral() -> None:
-    """A mood inside quadrant_label's neutral band reads "Neutral", not a quadrant name."""
+    """A mood inside quadrant_label's neutral band reads "Neutral", not a category name."""
     assert _mood_line()(NEUTRAL_MOOD) == "Mood: Neutral (Energy: 0.05 · Valence: -0.05)"
 
 
 def test_mood_line_pads_coordinates_to_two_decimals() -> None:
     """A coordinate with fewer than two decimals is zero-padded, not printed bare."""
     mood = {"id": 9, "timestamp": "2026-08-27T09:00:00", "energy": 0.5, "valence": -0.2}
-    assert _mood_line()(mood) == "Mood: High Energy Unpleasant (Energy: 0.50 · Valence: -0.20)"
+    assert _mood_line()(mood) == "Mood: Reckless Energy (Energy: 0.50 · Valence: -0.20)"
 
 
 def test_mood_line_rounds_coordinates_to_two_decimals() -> None:
@@ -102,15 +111,12 @@ def test_mood_line_rounds_coordinates_to_two_decimals() -> None:
         "energy": 0.666,
         "valence": -0.334,
     }
-    assert _mood_line()(mood) == "Mood: High Energy Unpleasant (Energy: 0.67 · Valence: -0.33)"
+    assert _mood_line()(mood) == "Mood: Reckless Energy (Energy: 0.67 · Valence: -0.33)"
 
 
 # --- mood_option_label -------------------------------------------------------
 
 
-def test_mood_option_label_joins_the_formatted_timestamp_and_quadrant() -> None:
-    """A select option reads "<%Y-%m-%d %H:%M UTC> — <quadrant>", em-dash separated."""
-    assert (
-        _mood_option_label()(HIGH_ENERGY_PLEASANT_MOOD)
-        == "2026-08-27 09:00 UTC — High Energy Pleasant"
-    )
+def test_mood_option_label_joins_the_formatted_timestamp_and_category() -> None:
+    """A select option reads "<%Y-%m-%d %H:%M UTC> — <category>", em-dash separated."""
+    assert _mood_option_label()(PEAK_EXCITEMENT_MOOD) == "2026-08-27 09:00 UTC — Peak Excitement"

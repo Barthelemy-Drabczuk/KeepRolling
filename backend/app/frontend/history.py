@@ -1,12 +1,13 @@
 """The mood history page, at /history.
 
-See ARCHITECTURE.md's FE-7 entry for the full contract: why
-quadrant_label duplicates analytics.get_mood_quadrant_name branch for
-branch (including its <, not <=, boundary and its valence==0 quirk),
-why app.storage.user must be read before the first await, why the
-failure branches use inline ui.label rather than ui.notify, and why
-this is the second authenticated call site, not the third that would
-trigger extracting an api.auth_headers() helper.
+See ARCHITECTURE.md's FE-7 entry for why app.storage.user must be read
+before the first await, why the failure branches use inline ui.label
+rather than ui.notify, and why this is the second authenticated call
+site, not the third that would trigger extracting an api.auth_headers()
+helper. See ARCHITECTURE.md's MC-2 entry for quadrant_label's current
+contract: it mirrors analytics.get_mood_quadrant_name's 8-category
+nearest-anchor logic (its <, not <=, neutral-band boundary included),
+Title Cased.
 """
 
 from datetime import datetime
@@ -29,18 +30,30 @@ _COLUMNS = [
 ]
 
 
+_CAPTION_ANCHORS: dict[str, tuple[float, float]] = {  # (valence, energy)
+    "reckless_energy": (-0.50, 0.50),
+    "energetic_optimism": (0.45, 0.35),
+    "peak_excitement": (0.60, 0.65),
+    "resigned_acceptance": (-0.35, -0.35),
+    "sinking_despair": (-0.50, -0.50),
+    "deep_despair": (-0.65, -0.65),
+    "relaxed_contentment": (0.50, -0.50),
+}
+
+
 def quadrant_label(energy: float, valence: float) -> str:
-    """Name the circumplex quadrant an ``(energy, valence)`` pair falls in."""
+    """Name the mood category an ``(energy, valence)`` pair falls in, Title Cased."""
     if abs(energy) < 0.1 and abs(valence) < 0.1:
-        return "Neutral"
-    elif energy > 0 and valence > 0:
-        return "High Energy Pleasant"
-    elif energy > 0 and valence < 0:
-        return "High Energy Unpleasant"
-    elif energy < 0 and valence > 0:
-        return "Low Energy Pleasant"
+        category = "neutral"
     else:
-        return "Low Energy Unpleasant"
+        category = min(
+            _CAPTION_ANCHORS,
+            key=lambda name: (
+                (valence - _CAPTION_ANCHORS[name][0]) ** 2
+                + (energy - _CAPTION_ANCHORS[name][1]) ** 2
+            ),
+        )
+    return category.replace("_", " ").title()
 
 
 def _format_timestamp(raw: str) -> str:
