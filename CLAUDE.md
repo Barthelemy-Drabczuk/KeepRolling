@@ -209,6 +209,12 @@ inspection for the commit gate). None of `pytest`, `ruff`, `git`, or `gh`
 is currently allow-listed anywhere in this repo, so expect a permission
 prompt on each of these commands rather than assuming they run silently.
 
+After every `qc-specialist` run, read `.claude/qc.log`'s newest entry
+directly rather than relying only on its relayed summary — that log is
+the one place its full Verdict/Tests/Lint/Format/Process-note report
+lands, append-only, and terse relays have caused real back-and-forth on
+this project before.
+
 # Commit conventions
 
 - Atomic commits: one logical change per commit, imperative-mood subject
