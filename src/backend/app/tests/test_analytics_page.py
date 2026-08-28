@@ -470,3 +470,253 @@ def test_trend_options_carries_no_brace_in_any_string() -> None:
     offenders = [s for s in _strings(_trend_options()(SAMPLE_MOODS)) if "{" in s or "}" in s]
 
     assert offenders == []
+
+
+# --- the scatter chart's options ---------------------------------------------
+
+
+# FE-9c's sample input: six moods, newest-first as the endpoint returns them,
+# deliberately *not* in CATEGORY_ORDER, so the series-ordering test below is
+# testing the function rather than the fixture. Between them they cover five
+# of MC-1's eight categories:
+#
+#   ( 0.60,  0.20)  energetic_optimism   -- asymmetric, see the point-order test
+#   (-0.65, -0.65)  deep_despair         \  same quadrant, so the same colour,
+#   (-0.50, -0.50)  sinking_despair      /  but still two separate series
+#   (-0.50,  0.50)  relaxed_contentment  -- swaps to reckless_energy if the
+#                                           classifier's arguments are flipped
+#   ( 0.00,  0.05)  neutral              \  one category, two points
+#   ( 0.02, -0.05)  neutral              /
+#
+# reckless_energy, peak_excitement and resigned_acceptance are absent from the
+# fixture entirely -- that is what the omission test pins.
+SCATTER_MOODS = [
+    {
+        "id": 46,
+        "user_id": 7,
+        "energy": 0.00,
+        "valence": 0.05,
+        "notes": None,
+        "timestamp": "2026-08-25T09:00:00",
+    },
+    {
+        "id": 45,
+        "user_id": 7,
+        "energy": -0.65,
+        "valence": -0.65,
+        "notes": None,
+        "timestamp": "2026-08-24T22:10:00",
+    },
+    {
+        "id": 44,
+        "user_id": 7,
+        "energy": 0.60,
+        "valence": 0.20,
+        "notes": "wired but only mildly pleased",
+        "timestamp": "2026-08-24T08:20:00",
+    },
+    {
+        "id": 43,
+        "user_id": 7,
+        "energy": -0.50,
+        "valence": 0.50,
+        "notes": None,
+        "timestamp": "2026-08-23T19:40:00",
+    },
+    {
+        "id": 42,
+        "user_id": 7,
+        "energy": -0.50,
+        "valence": -0.50,
+        "notes": None,
+        "timestamp": "2026-08-23T07:15:00",
+    },
+    {
+        "id": 41,
+        "user_id": 7,
+        "energy": 0.02,
+        "valence": -0.05,
+        "notes": None,
+        "timestamp": "2026-08-22T11:05:00",
+    },
+]
+
+# The five categories SCATTER_MOODS covers, in CATEGORY_ORDER order, labelled
+# the way category_label() renders them.
+EXPECTED_SCATTER_SERIES = [
+    "Energetic Optimism",
+    "Sinking Despair",
+    "Deep Despair",
+    "Relaxed Contentment",
+    "Neutral",
+]
+
+# The three categories SCATTER_MOODS does not reach. None of them may appear
+# as a series at all -- not even an empty one.
+ABSENT_SCATTER_SERIES = [
+    "Reckless Energy",
+    "Peak Excitement",
+    "Resigned Acceptance",
+]
+
+
+def _scatter_options() -> Callable[[list[dict]], dict]:
+    """Return ``frontend.analytics.scatter_options``."""
+    from frontend.analytics import scatter_options
+
+    return scatter_options
+
+
+def _scatter_series(moods: list[dict] = SCATTER_MOODS) -> list[dict]:
+    """The scatter chart's series list, for a given mood list."""
+    return _scatter_options()(moods)["series"]
+
+
+def _scatter_series_named(name: str, moods: list[dict] = SCATTER_MOODS) -> dict:
+    """The one scatter series called ``name``, for a given mood list."""
+    return next(s for s in _scatter_series(moods) if s.get("name") == name)
+
+
+def test_scatter_options_emits_one_series_per_category_present() -> None:
+    """Series are one-per-category-present, Title Cased, in CATEGORY_ORDER.
+
+    The order is the chart's, not the input's: SCATTER_MOODS arrives
+    newest-first from the endpoint, in an order unrelated to CATEGORY_ORDER,
+    so the legend must not inherit it.
+    """
+    assert [s["name"] for s in _scatter_series()] == EXPECTED_SCATTER_SERIES
+
+
+@pytest.mark.parametrize("label", ABSENT_SCATTER_SERIES)
+def test_scatter_options_omits_a_category_absent_from_the_input(label: str) -> None:
+    """A category no mood falls in gets no series -- not a zero-length one.
+
+    This is the one place the scatter chart deliberately differs from FE-9a's
+    bar chart, which renders all eight categories including the empty ones. An
+    empty bar reads as "none of these"; an empty scatter series only clutters
+    the legend with a category that has nothing to plot.
+    """
+    assert label not in [s["name"] for s in _scatter_series()]
+
+
+def test_scatter_options_keeps_same_quadrant_categories_as_separate_series() -> None:
+    """Two categories sharing one quadrant colour stay two series, not one.
+
+    sinking_despair and deep_despair both answer #98a8c0, because the colour
+    encodes the quadrant. Grouping is by *category*, so they must still emit
+    separately -- the shared colour is not a grouping key.
+    """
+    sinking = _scatter_series_named("Sinking Despair")
+    deep = _scatter_series_named("Deep Despair")
+
+    assert sinking["itemStyle"]["color"] == deep["itemStyle"]["color"] == LOW_ENERGY_UNPLEASANT
+    assert sinking["data"] == [[-0.50, -0.50]]
+    assert deep["data"] == [[-0.65, -0.65]]
+
+
+def test_scatter_options_plots_each_point_valence_first_then_energy() -> None:
+    """A point is ``[valence, energy]``: x is valence, y is energy.
+
+    The mood at energy 0.60 / valence 0.20 is asymmetric on purpose. Emitting
+    ``[energy, valence]`` instead would put it at [0.60, 0.20] -- still a valid
+    point inside the -1..1 square, still on a plausible-looking chart, and
+    wrong. This is REQ-UI-5's own named failure mode, so it gets its own test.
+    """
+    assert _scatter_series_named("Energetic Optimism")["data"] == [[0.20, 0.60]]
+
+
+def test_scatter_options_classifies_each_mood_energy_first_then_valence() -> None:
+    """``mood_category`` is called ``(energy, valence)``, the reverse of the point order.
+
+    The mood at energy -0.50 / valence 0.50 sits exactly on relaxed_contentment's
+    anchor, and exactly on reckless_energy's if the two arguments are swapped.
+    MC-1's anchor set is nearly symmetric about the diagonal, so most moods
+    classify identically either way -- this one does not, which is why it is in
+    the fixture.
+    """
+    assert "Relaxed Contentment" in [s["name"] for s in _scatter_series()]
+    assert "Reckless Energy" not in [s["name"] for s in _scatter_series()]
+    assert _scatter_series_named("Relaxed Contentment")["data"] == [[0.50, -0.50]]
+
+
+def test_scatter_options_groups_every_mood_into_its_categorys_series() -> None:
+    """Every input mood is plotted exactly once, and a category holding two holds both."""
+    points = [point for series in _scatter_series() for point in series["data"]]
+
+    assert len(points) == len(SCATTER_MOODS)
+    assert sorted(_scatter_series_named("Neutral")["data"]) == [[-0.05, 0.02], [0.05, 0.00]]
+
+
+def test_scatter_options_types_every_series_as_scatter() -> None:
+    """All five series are of type "scatter"; the chart mixes in no other type."""
+    assert [s["type"] for s in _scatter_series()] == ["scatter"] * len(EXPECTED_SCATTER_SERIES)
+
+
+def test_scatter_options_colours_each_series_by_its_category() -> None:
+    """Each series carries its category's quadrant colour, neutral's grey included."""
+    colours = [s["itemStyle"]["color"] for s in _scatter_series()]
+
+    assert colours == [
+        HIGH_ENERGY_PLEASANT,  # energetic_optimism
+        LOW_ENERGY_UNPLEASANT,  # sinking_despair
+        LOW_ENERGY_UNPLEASANT,  # deep_despair
+        LOW_ENERGY_PLEASANT,  # relaxed_contentment
+        NEUTRAL_GREY,  # neutral
+    ]
+
+
+def test_scatter_options_bounds_the_x_axis_to_the_valence_scale() -> None:
+    """The x-axis is a *value* axis named "Valence", pinned to -1..1.
+
+    A category axis would space the points evenly rather than by value, which
+    would destroy the circumplex geometry the chart exists to show. The fixed
+    bounds keep the plane square-ish and comparable between users, exactly as
+    on the trend chart. Asserted key-by-key rather than as a whole dict so a
+    later cosmetic addition (a split line, a name offset) does not fail a test
+    about the requirement.
+    """
+    x_axis = _scatter_options()(SCATTER_MOODS)["xAxis"]
+
+    assert x_axis["type"] == "value"
+    assert x_axis["name"] == "Valence"
+    assert x_axis["min"] == -1
+    assert x_axis["max"] == 1
+
+
+def test_scatter_options_bounds_the_y_axis_to_the_energy_scale() -> None:
+    """The y-axis is a value axis named "Energy", pinned to -1..1, same rationale."""
+    y_axis = _scatter_options()(SCATTER_MOODS)["yAxis"]
+
+    assert y_axis["type"] == "value"
+    assert y_axis["name"] == "Energy"
+    assert y_axis["min"] == -1
+    assert y_axis["max"] == 1
+
+
+def test_scatter_options_renders_an_empty_mood_list_as_an_empty_chart() -> None:
+    """``scatter_options([])`` keeps both axes and returns no series at all.
+
+    With absent categories omitted, "no moods" means "no categories present",
+    so the series list is empty rather than eight empty series. The page
+    suppresses the chart for an empty fetch anyway; the function stays total
+    so a caller that does reach this gets a valid options dict.
+    """
+    options = _scatter_options()([])
+
+    assert options["series"] == []
+    assert options["xAxis"]["name"] == "Valence"
+    assert options["yAxis"]["name"] == "Energy"
+
+
+def test_scatter_options_carries_no_brace_in_any_string() -> None:
+    """No scatter-options string contains a brace, for the same reason as the other two.
+
+    tests/test_frontend.py's ``_rendered_props`` counts { and } across the
+    served HTML without string awareness, so one unbalanced brace in an ECharts
+    template breaks props parsing for the whole page. A per-point tooltip
+    formatter ("{c}") is the obvious reach on a scatter chart; it is banned
+    here too.
+    """
+    offenders = [s for s in _strings(_scatter_options()(SCATTER_MOODS)) if "{" in s or "}" in s]
+
+    assert offenders == []

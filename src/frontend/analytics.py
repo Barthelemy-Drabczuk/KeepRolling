@@ -5,7 +5,7 @@ from datetime import datetime
 from nicegui import app, ui
 
 from . import api
-from .history import category_label
+from .history import category_label, mood_category
 
 ANALYTICS_EMPTY = "No mood data to analyse yet."
 LOGIN_PROMPT = "Please log in to view your analytics."
@@ -92,6 +92,28 @@ def trend_options(moods: list[dict]) -> dict:
     }
 
 
+def scatter_options(moods: list[dict]) -> dict:
+    """ECharts options for the circumplex scatter chart, one series per category."""
+    grouped: dict[str, list[list[float]]] = {}
+    for mood in moods:
+        category = mood_category(mood["energy"], mood["valence"])
+        grouped.setdefault(category, []).append([mood["valence"], mood["energy"]])
+    return {
+        "xAxis": {"type": "value", "name": "Valence", "min": -1, "max": 1},
+        "yAxis": {"type": "value", "name": "Energy", "min": -1, "max": 1},
+        "series": [
+            {
+                "name": category_label(category),
+                "type": "scatter",
+                "data": grouped[category],
+                "itemStyle": {"color": category_colour(category)},
+            }
+            for category in CATEGORY_ORDER
+            if category in grouped
+        ],
+    }
+
+
 def create() -> None:
     """Register the /analytics page."""
 
@@ -126,6 +148,7 @@ def create() -> None:
                     if moods:
                         with trend_slot:
                             ui.echart(trend_options(moods))
+                            ui.echart(scatter_options(moods))
             else:
                 ui.label(ANALYTICS_EMPTY)
         elif response.status_code == 401:
