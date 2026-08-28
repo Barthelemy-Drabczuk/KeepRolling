@@ -156,7 +156,7 @@ def create() -> None:
                 response = await http.post(
                     f"/users/{username}/moods",
                     json={"energy": current_energy, "valence": current_valence},
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers=api.auth_headers(token),
                 )
             if response.status_code == 201:
                 ui.notify("Mood logged!")

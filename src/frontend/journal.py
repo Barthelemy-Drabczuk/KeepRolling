@@ -69,7 +69,7 @@ async def _fetch_entries(username: str, token: str) -> httpx.Response:
         return await http.get(
             f"/users/{username}/entries",
             params={"limit": JOURNAL_LIMIT},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=api.auth_headers(token),
         )
 
 
@@ -79,7 +79,7 @@ async def _fetch_moods(username: str, token: str) -> httpx.Response:
         return await http.get(
             f"/users/{username}/moods",
             params={"limit": MOOD_WINDOW},
-            headers={"Authorization": f"Bearer {token}"},
+            headers=api.auth_headers(token),
         )
 
 
@@ -120,7 +120,7 @@ def create() -> None:
                 response = await http.post(
                     f"/users/{username}/entries",
                     json=payload,
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers=api.auth_headers(token),
                 )
             if response.status_code == 201:
                 ui.notify(SAVE_SUCCESS)

@@ -97,7 +97,7 @@ def create() -> None:
             response = await http.get(
                 f"/users/{username}/moods",
                 params={"limit": HISTORY_LIMIT},
-                headers={"Authorization": f"Bearer {token}"},
+                headers=api.auth_headers(token),
             )
 
         if response.status_code == 200:

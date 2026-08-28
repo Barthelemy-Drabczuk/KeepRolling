@@ -128,7 +128,7 @@ def create() -> None:
         async with api.client() as http:
             response = await http.get(
                 f"/users/{username}/analytics/statistics",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=api.auth_headers(token),
             )
 
         if response.status_code == 200:
@@ -141,7 +141,7 @@ def create() -> None:
                     moods_response = await http.get(
                         f"/users/{username}/moods",
                         params={"limit": MOODS_LIMIT},
-                        headers={"Authorization": f"Bearer {token}"},
+                        headers=api.auth_headers(token),
                     )
                 if moods_response.status_code == 200:
                     moods = moods_response.json()

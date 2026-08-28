@@ -21,3 +21,8 @@ def client() -> httpx.AsyncClient:
         transport=httpx.ASGITransport(app=backend.app, raise_app_exceptions=False),
         base_url=BASE_URL,
     )
+
+
+def auth_headers(token: str) -> dict[str, str]:
+    """The Authorization header every authenticated frontend call sends."""
+    return {"Authorization": f"Bearer {token}"}
