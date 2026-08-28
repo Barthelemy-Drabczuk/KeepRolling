@@ -1,5 +1,7 @@
 """The analytics/charts page, at /analytics."""
 
+from datetime import datetime
+
 from nicegui import app, ui
 
 from . import api
@@ -9,6 +11,7 @@ ANALYTICS_EMPTY = "No mood data to analyse yet."
 LOGIN_PROMPT = "Please log in to view your analytics."
 GENERIC_FAILURE = "Could not complete the request."
 NEUTRAL_COLOUR = "#909090"
+MOODS_LIMIT = 100
 
 _CATEGORY_QUADRANTS: dict[str, str] = {  # category -> the quadrant its MC-1 anchor is in
     "reckless_energy": "high_energy_unpleasant",  # (-0.50,  0.50)
@@ -57,6 +60,38 @@ def distribution_options(distribution: dict) -> dict:
     }
 
 
+def trend_options(moods: list[dict]) -> dict:
+    """ECharts options for the energy/valence-over-time line chart."""
+    from . import QUADRANT_COLOURS
+
+    ordered = list(reversed(moods))
+    return {
+        "xAxis": {
+            "type": "category",
+            "name": "Time (UTC)",
+            "data": [
+                datetime.fromisoformat(mood["timestamp"]).strftime("%Y-%m-%d %H:%M")
+                for mood in ordered
+            ],
+        },
+        "yAxis": {"type": "value", "min": -1, "max": 1},
+        "series": [
+            {
+                "name": "Energy",
+                "type": "line",
+                "data": [mood["energy"] for mood in ordered],
+                "itemStyle": {"color": QUADRANT_COLOURS["high_energy_unpleasant"]},
+            },
+            {
+                "name": "Valence",
+                "type": "line",
+                "data": [mood["valence"] for mood in ordered],
+                "itemStyle": {"color": QUADRANT_COLOURS["low_energy_pleasant"]},
+            },
+        ],
+    }
+
+
 def create() -> None:
     """Register the /analytics page."""
 
@@ -77,7 +112,20 @@ def create() -> None:
         if response.status_code == 200:
             payload = response.json()
             if payload.get("total_entries", 0) > 0:
+                trend_slot = ui.element("div")
                 ui.echart(distribution_options(payload["quadrant_distribution"]))
+
+                async with api.client() as http:
+                    moods_response = await http.get(
+                        f"/users/{username}/moods",
+                        params={"limit": MOODS_LIMIT},
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                if moods_response.status_code == 200:
+                    moods = moods_response.json()
+                    if moods:
+                        with trend_slot:
+                            ui.echart(trend_options(moods))
             else:
                 ui.label(ANALYTICS_EMPTY)
         elif response.status_code == 401:

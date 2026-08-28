@@ -119,6 +119,58 @@ PARTIAL_DISTRIBUTION = {
 }
 
 
+# FE-9b's sample input: four MoodResponse objects as ``GET /users/{username}
+# /moods`` actually returns them -- newest first, since app.py orders by
+# ``timestamp.desc()``. ``trend_options`` must reverse this to oldest-first
+# before plotting, so every expectation below reads bottom-up.
+SAMPLE_MOODS = [
+    {
+        "id": 41,
+        "user_id": 7,
+        "energy": -0.65,
+        "valence": -0.65,
+        "notes": None,
+        "timestamp": "2026-08-23T07:05:00",
+    },
+    {
+        "id": 40,
+        "user_id": 7,
+        "energy": 0.60,
+        "valence": 0.65,
+        "notes": "a good evening",
+        "timestamp": "2026-08-22T21:45:00",
+    },
+    {
+        "id": 39,
+        "user_id": 7,
+        "energy": 0.00,
+        "valence": 0.05,
+        "notes": None,
+        "timestamp": "2026-08-21T12:00:00",
+    },
+    {
+        "id": 38,
+        "user_id": 7,
+        "energy": -0.50,
+        "valence": 0.50,
+        "notes": None,
+        "timestamp": "2026-08-20T14:30:00",
+    },
+]
+
+# The same four, oldest-first, formatted "%Y-%m-%d %H:%M" -- no "UTC"
+# suffix per tick, unlike history._format_timestamp: the axis names the
+# unit once, in its own `name`.
+EXPECTED_TICKS = [
+    "2026-08-20 14:30",
+    "2026-08-21 12:00",
+    "2026-08-22 21:45",
+    "2026-08-23 07:05",
+]
+EXPECTED_ENERGIES = [-0.50, 0.00, 0.60, -0.65]
+EXPECTED_VALENCES = [0.50, 0.05, 0.65, -0.65]
+
+
 def _category_colour() -> Callable[[str], str]:
     """Return ``frontend.analytics.category_colour``."""
     from frontend.analytics import category_colour
@@ -138,6 +190,13 @@ def _distribution_options() -> Callable[[dict], dict]:
     from frontend.analytics import distribution_options
 
     return distribution_options
+
+
+def _trend_options() -> Callable[[list[dict]], dict]:
+    """Return ``frontend.analytics.trend_options``."""
+    from frontend.analytics import trend_options
+
+    return trend_options
 
 
 def _quadrant_colours() -> dict[str, str]:
@@ -291,5 +350,123 @@ def test_distribution_options_carries_no_brace_in_any_string() -> None:
     offenders = [
         s for s in _strings(_distribution_options()(PARTIAL_DISTRIBUTION)) if "{" in s or "}" in s
     ]
+
+    assert offenders == []
+
+
+# --- the trend chart's options -----------------------------------------------
+
+
+def _series_named(name: str, moods: list[dict] = SAMPLE_MOODS) -> dict:
+    """The one trend series called ``name``, for a given mood list."""
+    return next(s for s in _trend_options()(moods)["series"] if s.get("name") == name)
+
+
+def test_trend_options_plots_the_newest_first_input_oldest_first() -> None:
+    """The x-axis runs left-to-right in time, reversing the endpoint's ordering.
+
+    ``GET /users/{username}/moods`` orders by ``timestamp.desc()``, so the
+    raw list is newest-first; a time series read that way would run
+    backwards.
+    """
+    assert _trend_options()(SAMPLE_MOODS)["xAxis"]["data"] == EXPECTED_TICKS
+
+
+def test_trend_options_names_the_time_axis_once_rather_than_per_tick() -> None:
+    """The x-axis is a category axis named "Time (UTC)".
+
+    The unit belongs on the axis, which is why the individual ticks carry
+    no "UTC" suffix -- see the next test.
+    """
+    x_axis = _trend_options()(SAMPLE_MOODS)["xAxis"]
+
+    assert x_axis["type"] == "category"
+    assert x_axis["name"] == "Time (UTC)"
+
+
+def test_trend_options_formats_each_tick_without_a_utc_suffix() -> None:
+    """Ticks are "%Y-%m-%d %H:%M" exactly, not history's "%Y-%m-%d %H:%M UTC".
+
+    This is deliberately *not* a third consumer of
+    ``history._format_timestamp``: the two formats differ, so the shared-
+    helper extraction FE-8a is waiting on is not triggered here.
+    """
+    ticks = _trend_options()(SAMPLE_MOODS)["xAxis"]["data"]
+
+    assert all("UTC" not in tick for tick in ticks)
+
+
+def test_trend_options_bounds_the_y_axis_to_the_mood_scale() -> None:
+    """The value axis is pinned to -1..1, the range models.py constrains moods to.
+
+    Fixed bounds keep two charts of different users comparable, and stop a
+    flat run of moods from being auto-scaled into dramatic noise.
+    """
+    assert _trend_options()(SAMPLE_MOODS)["yAxis"] == {"type": "value", "min": -1, "max": 1}
+
+
+def test_trend_options_plots_exactly_two_line_series() -> None:
+    """Energy and valence share one chart as two lines, in that order."""
+    series = _trend_options()(SAMPLE_MOODS)["series"]
+
+    assert [s["name"] for s in series] == ["Energy", "Valence"]
+    assert [s["type"] for s in series] == ["line", "line"]
+
+
+def test_trend_options_takes_the_energy_line_from_each_moods_energy() -> None:
+    """The Energy line carries the raw energy floats, oldest-first."""
+    assert _series_named("Energy")["data"] == EXPECTED_ENERGIES
+
+
+def test_trend_options_takes_the_valence_line_from_each_moods_valence() -> None:
+    """The Valence line carries the raw valence floats, oldest-first."""
+    assert _series_named("Valence")["data"] == EXPECTED_VALENCES
+
+
+def test_trend_options_colours_the_energy_line_for_contrast_not_quadrant() -> None:
+    """Energy takes QUADRANT_COLOURS["high_energy_unpleasant"].
+
+    The hex is borrowed for contrast against the Valence line only. Energy
+    is an axis, not a quadrant, so the palette entry's name carries no
+    meaning here.
+    """
+    assert (
+        _series_named("Energy")["itemStyle"]["color"]
+        == _quadrant_colours()["high_energy_unpleasant"]
+    )
+
+
+def test_trend_options_colours_the_valence_line_for_contrast_not_quadrant() -> None:
+    """Valence takes QUADRANT_COLOURS["low_energy_pleasant"], again for contrast only."""
+    assert (
+        _series_named("Valence")["itemStyle"]["color"] == _quadrant_colours()["low_energy_pleasant"]
+    )
+
+
+def test_trend_options_renders_an_empty_mood_list_as_an_empty_chart() -> None:
+    """``trend_options([])`` keeps the whole structure, with every data list empty.
+
+    The page suppresses the chart entirely for an empty fetch, so this
+    branch is not reached in practice -- but the function stays total, so
+    a caller that does reach it gets a valid options dict rather than a
+    KeyError or a half-built one.
+    """
+    options = _trend_options()([])
+
+    assert options["xAxis"]["data"] == []
+    assert options["yAxis"] == {"type": "value", "min": -1, "max": 1}
+    assert [s["data"] for s in options["series"]] == [[], []]
+
+
+def test_trend_options_carries_no_brace_in_any_string() -> None:
+    """No trend-options string contains a brace, for the same reason as the bar chart.
+
+    tests/test_frontend.py's ``_rendered_props`` counts { and } across the
+    served HTML without string awareness, so an unbalanced brace in any
+    ECharts template breaks props parsing for the whole page. A time-axis
+    chart is exactly where a "{b}" tooltip formatter would be reached for;
+    it is banned here too.
+    """
+    offenders = [s for s in _strings(_trend_options()(SAMPLE_MOODS)) if "{" in s or "}" in s]
 
     assert offenders == []
