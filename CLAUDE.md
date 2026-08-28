@@ -20,29 +20,32 @@ pixi run -e test test           # pytest (needs -e test: pytest lives in the tes
 pixi run -e dev lint            # ruff check .
 pixi run -e dev format-check    # ruff format --check .
 pixi run -e dev format          # ruff format . (auto-fixes formatting)
-pixi run db-test                # sanity-check the DB connection (backend/db.py)
+pixi run db-test                # sanity-check the DB connection (src/backend/db.py)
 pixi run db-migrate             # alembic upgrade head
 pixi run db-revision -m "message"   # alembic revision --autogenerate
 ```
 
 **Running the dev server — do not use `pixi run dev` as-is.** That task runs
-`uvicorn backend.app.app:app` from the repo root, but every module in
-`backend/app/` uses bare imports (`from database import get_db`, `from models
+`uvicorn src.backend.app.app:app` from the repo root, but every module in
+`src/backend/app/` uses bare imports (`from database import get_db`, `from models
 import ...`), and `app.mount("/static", StaticFiles(directory="static"))`
-uses a relative path too. Both only resolve if `backend/app/` itself is the
+uses a relative path too. Both only resolve if `src/backend/app/` itself is the
 process's working directory / on `sys.path`. This has been verified: running
 from repo root fails with `ModuleNotFoundError: No module named 'database'`.
 Instead:
 
 ```bash
-cd backend/app
+cd src/backend/app
 uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Tests live in `backend/app/tests/`; `backend/app/pytest.ini` sets
-`pythonpath = .` so `pytest`, run from `backend/app/`, can import the
-application modules the same way `uvicorn` does. Run a single file or test
-the normal pytest way: `pixi run -e test pytest tests/test_auth.py` or
+Tests live in `src/backend/app/tests/`; `src/backend/app/pytest.ini` sets
+`pythonpath = . ../../` (the second entry puts `src/` on the path too, for
+`from frontend.history import ...` — `src/frontend/` is a sibling of
+`src/backend/`, not nested inside it) so `pytest`, run from
+`src/backend/app/`, can import the application modules the same way
+`uvicorn` does. Run a single file or test the normal pytest way:
+`pixi run -e test pytest tests/test_auth.py` or
 `pixi run -e test pytest tests/test_auth.py::test_login_succeeds`.
 `tests/conftest.py` overrides the `get_db` dependency with an isolated
 in-memory SQLite database per test (via the `client` fixture) and no-ops
@@ -51,7 +54,7 @@ in-memory SQLite database per test (via the `client` fixture) and no-ops
 ### Docker
 
 ```bash
-cd backend
+cd src/backend
 docker-compose up --build
 ```
 
@@ -61,7 +64,7 @@ bind-mounts `./alembic` and `./alembic.ini` into the container.
 
 ### Environment
 
-`backend/app/.env` (gitignored) must define `DATABASE_URL`; `database.py`
+`src/backend/app/.env` (gitignored) must define `DATABASE_URL`; `database.py`
 raises at import time if it's unset. `auth.py` reads `SECRET_KEY` (defaults
 to an insecure placeholder if unset — always set it), `ALGORITHM`
 (`HS256`), and hardcodes `ACCESS_TOKEN_EXPIRE_MINUTES = 30`.
@@ -74,7 +77,7 @@ Follow PEP 8. `ruff` (configured in `pyproject.toml`'s `[tool.ruff]`,
 work as done; `pixi run -e dev format` auto-fixes formatting. The existing
 codebase is not yet clean (mostly trailing whitespace and import
 ordering — `pixi run -e dev lint` currently reports ~320 issues, largely
-in `backend/db.py` and files ruff hasn't touched yet); don't take existing
+in `src/backend/db.py` and files ruff hasn't touched yet); don't take existing
 code as a style example, and don't take on a repo-wide reformat as a side
 effect of an unrelated change — fix style in files you're already editing
 for another reason. `app_new.py` is excluded from ruff (see "dead code"
@@ -123,16 +126,16 @@ bundling it.
 
 ### Runtime app vs. dead code — read this before editing
 
-- **`backend/app/app.py`** is the actual application (mounted by the
+- **`src/backend/app/app.py`** is the actual application (mounted by the
   Dockerfile's `CMD` and the README's run instructions) — FastAPI routes for
   auth, users, moods, entries, analytics, and export.
-- **`backend/app/app_new.py`** and **`backend/app/index_new.html`** are
+- **`src/backend/app/app_new.py`** and **`src/backend/app/index_new.html`** are
   earlier/orphaned variants of `app.py`/`index.html` (missing the export
   endpoints and the Chart.js visualization panel, respectively). Nothing
   imports or references them — they aren't wired into the Dockerfile,
   docker-compose, or any entrypoint. Treat them as dead unless told
   otherwise; don't assume changes to `app.py` need mirroring there.
-- **`backend/app/User.py`** is a standalone in-memory `User` class
+- **`src/backend/app/User.py`** is a standalone in-memory `User` class
   (plaintext password, dict-based mood/entry storage) that nothing else in
   the codebase imports. It predates the SQLAlchemy models and is not part of
   the request path — don't confuse it with `models.UserModel`.
@@ -144,7 +147,7 @@ bundling it.
 - **`database.py`** — SQLAlchemy engine/session setup from `DATABASE_URL`,
   plus the `get_db()` FastAPI dependency and `init_db()` (called on the
   `startup` event to create tables — there's no separate seed/init script;
-  schema also evolves via Alembic migrations in `backend/alembic/versions/`
+  schema also evolves via Alembic migrations in `src/backend/alembic/versions/`
   — hand-written, not `--autogenerate`d, since there's no live Postgres to
   diff against in a typical dev/CI environment here; each has been verified
   by applying it to a real Postgres via `docker-compose up -d db`).
@@ -197,7 +200,7 @@ Three subagents (`requirement-specialist`, `qc-specialist`,
 `commit-reviewer`, described in `AGENTS.md`) implement a red-green-refactor
 gate before commits: turn a `BUSINESS.md` requirement into a failing
 pytest test (per the "Requirements" section above) → implement → verify
-with `pytest` (from `backend/app/`, per the cwd note above) and `ruff
+with `pytest` (from `src/backend/app/`, per the cwd note above) and `ruff
 check`/`ruff format --check` (from the repo root, where `pyproject.toml`'s
 `[tool.ruff]` config lives) → review the staged diff → commit. Their
 supporting skills live in `.claude/skills/` (indexed in

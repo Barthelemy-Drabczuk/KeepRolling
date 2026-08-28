@@ -11,10 +11,11 @@ It provides comprehensive RESTful API endpoints for:
 """
 
 import os
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
-import frontend
 from auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     authenticate_user,
@@ -42,6 +43,16 @@ from schemas import (
     UserWithMoodsAndEntries,
 )
 from sqlalchemy.orm import Session
+
+# frontend/ lives at the repo root's src/frontend/, a sibling of
+# src/backend/ rather than a subdirectory of this file's own package —
+# put src/ on sys.path so the bare `import frontend` below resolves,
+# without touching how this module's own bare imports above (auth,
+# database, models, ...) work: those still rely on src/backend/app/
+# being the process's cwd, unchanged.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import frontend  # noqa: E402
 
 # Create the FastAPI application instance
 app = FastAPI(

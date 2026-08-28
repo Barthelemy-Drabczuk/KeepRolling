@@ -40,7 +40,7 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend/app"]
+packages = ["src/backend/app"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
@@ -50,12 +50,12 @@ platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
 moodometer = { path = ".", editable = true }
 
 [tool.pixi.tasks]
-dev = "uvicorn backend.app.app:app --reload --host 0.0.0.0 --port 8000"
+dev = "uvicorn src.backend.app.app:app --reload --host 0.0.0.0 --port 8000"
 test = "pytest"
 lint = "ruff check ."
 format-check = "ruff format --check ."
 format = "ruff format ."
-db-test = "python backend/db.py"
+db-test = "python src/backend/db.py"
 db-migrate = "alembic upgrade head"
 db-revision = "alembic revision --autogenerate -m"
 

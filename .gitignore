@@ -5,12 +5,12 @@ __pycache__/
 
 # Virtual environments / package managers
 .venv/
-backend/app/.venv/
+src/backend/app/.venv/
 .pixi/
 
 # Secrets
 .env
-backend/app/.env
+src/backend/app/.env
 
 # Tooling caches / local state
 .ruff_cache/
