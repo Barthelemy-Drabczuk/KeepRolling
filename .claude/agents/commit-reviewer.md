@@ -15,8 +15,8 @@ When invoked:
 
 1. Run `git status` and `git diff --staged` to see exactly what's about
    to be committed — from the code repo root for a code change, or with
-   `git -C elm status` / `git -C elm diff --staged` for a change to the
-   requirements/design/task ledger, which lives in `elm/` as its own
+   `git -C .elm status` / `git -C .elm diff --staged` for a change to the
+   requirements/design/task ledger, which lives in `.elm/` as its own
    repository (see AGENTS.md's "Repository layout"). Every commit
    belongs to exactly one of the two; never let a diff span both.
 2. **Atomicity:** is this one logical change, or several unrelated
@@ -38,7 +38,7 @@ When invoked:
    pytest file, a `.tftest.hcl` block, a policy check — see
    `stack-profiles`), flag it — that's very likely a skipped red step,
    not a false positive. This doesn't apply to a ledger commit inside
-   `elm/`, which never touches test or implementation files by design;
+   `.elm/`, which never touches test or implementation files by design;
    nor does it require one test per resource in an infra diff the way
    it does for application code — one policy or test file can
    legitimately cover a whole class of resources.
@@ -50,7 +50,7 @@ When invoked:
    commit, but a bad infra apply can destroy something no revert brings
    back.
 7. **Submodule bump commits:** a code-repo commit that stages only
-   `elm` (bumping its pinned commit forward, nothing else) is
+   `.elm` (bumping its pinned commit forward, nothing else) is
    mechanical — approve it on sight rather than running the full
    checklist above on it.
 

@@ -1,6 +1,6 @@
 ---
 name: stack-profiles
-description: Defines what "red", "green", and "verify" concretely mean for each technology stack this project uses — Python/pytest, Terraform, or others. Use this whenever requirement-specialist needs to write or confirm a failing check, whenever qc-specialist or commit-reviewer needs to run verification, or whenever a requirement or diff spans more than one stack and the split needs to be understood. Trigger this before running any test/lint/format command — never assume pytest or ruff exist just because they did last time. Check STACK.md at the repo root, or the requirement's own Stack: field in elm/REQUIREMENTS.md, before doing anything stack-specific.
+description: Defines what "red", "green", and "verify" concretely mean for each technology stack this project uses — Python/pytest, Terraform, or others. Use this whenever requirement-specialist needs to write or confirm a failing check, whenever qc-specialist or commit-reviewer needs to run verification, or whenever a requirement or diff spans more than one stack and the split needs to be understood. Trigger this before running any test/lint/format command — never assume pytest or ruff exist just because they did last time. Check STACK.md at the repo root, or the requirement's own Stack: field in .elm/REQUIREMENTS.md, before doing anything stack-specific.
 ---
 
 # Stack profiles
@@ -13,7 +13,7 @@ from hardcoding one language's tools into their own instructions.
 
 1. Check `STACK.md` at the repo root — it maps path prefixes to
    stacks.
-2. If you already know the requirement's ID, `elm/REQUIREMENTS.md`'s
+2. If you already know the requirement's ID, `.elm/REQUIREMENTS.md`'s
    `Stack:` field on that entry is authoritative — trust it over
    guessing from paths.
 3. If a diff or requirement touches more than one stack's paths, treat

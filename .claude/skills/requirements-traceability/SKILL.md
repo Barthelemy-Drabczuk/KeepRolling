@@ -1,14 +1,14 @@
 ---
 name: requirements-traceability
-description: Defines the entry schema for elm/REQUIREMENTS.md and the commit convention that keeps its history trustworthy. Use whenever requirement-specialist records a requirement's INCOSE result (accepted or rejected), or amends/supersedes a previously-accepted requirement. Not for elm/TASKS.md (status/sequencing — see task-manager-specialist) or elm/ARCHITECTURE.md (design contracts — see design-specialist).
+description: Defines the entry schema for .elm/REQUIREMENTS.md and the commit convention that keeps its history trustworthy. Use whenever requirement-specialist records a requirement's INCOSE result (accepted or rejected), or amends/supersedes a previously-accepted requirement. Not for .elm/TASKS.md (status/sequencing — see task-manager-specialist) or .elm/ARCHITECTURE.md (design contracts — see design-specialist).
 ---
 
 # Requirements traceability
 
-`elm/REQUIREMENTS.md` is the system of record for a requirement's own
+`.elm/REQUIREMENTS.md` is the system of record for a requirement's own
 *content* — its exact accepted (or rejected) wording, its INCOSE result,
 and whether it's since been superseded. See AGENTS.md's "The
-requirements ledger" section for how this differs from `elm/TASKS.md`
+requirements ledger" section for how this differs from `.elm/TASKS.md`
 (which tracks a backlog item's *state*, not its content).
 
 ## Append-only, never edited in place
@@ -16,7 +16,7 @@ requirements ledger" section for how this differs from `elm/TASKS.md`
 A requirement's history is worth keeping. Once an entry is written,
 never edit or delete it to reflect a later change — append a new entry
 that supersedes it instead (see below). This is the same discipline
-`elm/REQUIREMENTS.md` shares with git itself: the record of what was
+`.elm/REQUIREMENTS.md` shares with git itself: the record of what was
 true *at the time* is the point.
 
 ## Entry schema
@@ -57,15 +57,15 @@ than rewriting history. Never delete the old entry's `Wording` or
 
 ## Commit convention
 
-A commit touching `elm/REQUIREMENTS.md` is a ledger commit — it lives
-inside the `elm/` submodule's own repository, reviewed by
-`commit-reviewer` via `git -C elm diff --staged` (see AGENTS.md's
+A commit touching `.elm/REQUIREMENTS.md` is a ledger commit — it lives
+inside the `.elm/` submodule's own repository, reviewed by
+`commit-reviewer` via `git -C .elm diff --staged` (see AGENTS.md's
 "Repository layout"), never bundled with a code-repo commit or an
-`elm/ARCHITECTURE.md`/`elm/TASKS.md` change unless they're genuinely one
+`.elm/ARCHITECTURE.md`/`.elm/TASKS.md` change unless they're genuinely one
 logical change (e.g., recording a rejected requirement is usually
-`elm/REQUIREMENTS.md` alone; recording an accepted one alongside its
-first test-file mention in `elm/TASKS.md` can be one commit if
-`task-manager-specialist` already created that `elm/TASKS.md` row in the
+`.elm/REQUIREMENTS.md` alone; recording an accepted one alongside its
+first test-file mention in `.elm/TASKS.md` can be one commit if
+`task-manager-specialist` already created that `.elm/TASKS.md` row in the
 same pass). Commit message: imperative mood, names the requirement ID
 (e.g. "Record REQ-ENTRY-7 as accepted" or "Reject REQ-EXPORT-5:
 ambiguous date-range wording") — same conventions as any other commit in

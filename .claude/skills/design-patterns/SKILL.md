@@ -10,7 +10,7 @@ the shape a component needs instead of deriving it from first
 principles every time. Faster to write, and the pattern name itself
 carries structure — "Strategy" conveys more than a paragraph of prose
 describing the same thing, for you and for whoever reads
-`elm/ARCHITECTURE.md` later.
+`.elm/ARCHITECTURE.md` later.
 
 ## Symptom → pattern
 
@@ -35,7 +35,7 @@ of the other way around.
 
 1. Find the row that matches. Load `references/<pattern>.md` for that
    one pattern only — not the others.
-2. Use its contract notation verbatim in `elm/ARCHITECTURE.md`, filled
+2. Use its contract notation verbatim in `.elm/ARCHITECTURE.md`, filled
    in for this component. It's shorter than prose and consistent
    across the codebase.
 3. If nothing matches, that's fine — most contracts are plain interface

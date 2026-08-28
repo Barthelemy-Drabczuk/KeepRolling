@@ -32,7 +32,7 @@ the other two toolboxes.
 
 1. Find the row that matches. Load `references/<pattern>.md` for that
    one pattern only.
-2. Use its contract notation verbatim in `elm/ARCHITECTURE.md`.
+2. Use its contract notation verbatim in `.elm/ARCHITECTURE.md`.
 3. If nothing matches, describe the visual treatment directly — most
    layout decisions don't need a named pattern.
 
@@ -64,7 +64,7 @@ infrastructure shape is `stack-profiles`. A requirement often draws
 from more than one: a settings page might need Progressive Disclosure
 from `ux-patterns` for which fields show by default, and Card plus
 Design Tokens from here for how each section is visually grouped —
-record all of them in the same `elm/ARCHITECTURE.md` entry.
+record all of them in the same `.elm/ARCHITECTURE.md` entry.
 
 Currently defined: `references/card.md`, `references/modal-overlay.md`,
 `references/responsive-grid.md`, `references/visual-hierarchy.md`,

@@ -33,7 +33,7 @@ requirement to fit it.
 
 1. Find the row that matches. Load `references/<pattern>.md` for that
    one pattern only.
-2. Use its contract notation verbatim in `elm/ARCHITECTURE.md`. Same
+2. Use its contract notation verbatim in `.elm/ARCHITECTURE.md`. Same
    reasoning as the software toolbox: shorter than prose, and
    consistent for whoever builds the screen.
 3. If nothing matches, describe the interaction directly — most UI
@@ -65,7 +65,7 @@ A single requirement can need more than one: a password-reset flow
 might draw a Wizard/Stepper from here, a Modal from `ui-patterns` for
 how each step is presented, and a Strategy for the notification
 channel from `design-patterns` — record all of them in the same
-`elm/ARCHITECTURE.md` entry rather than splitting the component across
+`.elm/ARCHITECTURE.md` entry rather than splitting the component across
 several.
 
 Currently defined: `references/progressive-disclosure.md`,

@@ -22,12 +22,12 @@ When given a requirement, work in this order:
    vague/subjective qualifier without a measurable definition, leaves a
    TBD, or can reasonably be read two different ways — do not guess or
    write tests against your own interpretation. Record it as rejected
-   in `elm/REQUIREMENTS.md` using the requirements-traceability skill, then
+   in `.elm/REQUIREMENTS.md` using the requirements-traceability skill, then
    report back to the main thread exactly which characteristic fails
    and what specifically needs disambiguating, and stop there.
    (`BUSINESS.md`'s "Open questions" section already has examples of
    requirements rejected for this reason.)
-2. **If it's well-formed**, record it as accepted in `elm/REQUIREMENTS.md`
+2. **If it's well-formed**, record it as accepted in `.elm/REQUIREMENTS.md`
    using the requirements-traceability skill — including which stack(s)
    it targets, per the `stack-profiles` skill — then write focused
    tests that encode the requirement precisely, following that stack's

@@ -61,5 +61,5 @@ EOF
 If you were invoked with a requirement ID in context, put it on the
 timestamp line (`### 2026-08-26T14:32:00Z — R-014`); otherwise log
 without one. `.claude/qc.log` is local run history, not a governed
-artifact — it belongs in `.gitignore`, not in `elm/` or a commit of
+artifact — it belongs in `.gitignore`, not in `.elm/` or a commit of
 its own.
