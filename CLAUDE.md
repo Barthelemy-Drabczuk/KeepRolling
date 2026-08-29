@@ -133,12 +133,13 @@ bundling it.
 - **`src/backend/app/app.py`** is the actual application (mounted by the
   Dockerfile's `CMD` and the README's run instructions) — FastAPI routes for
   auth, users, moods, entries, analytics, and export.
-- **`src/backend/app/app_new.py`** and **`src/backend/app/index_new.html`** are
-  earlier/orphaned variants of `app.py`/`index.html` (missing the export
-  endpoints and the Chart.js visualization panel, respectively). Nothing
-  imports or references them — they aren't wired into the Dockerfile,
-  docker-compose, or any entrypoint. Treat them as dead unless told
-  otherwise; don't assume changes to `app.py` need mirroring there.
+- **`src/backend/app/app_new.py`** is an earlier, orphaned variant of
+  `app.py` (missing the export endpoints). Nothing imports or references
+  it — it isn't wired into the Dockerfile, docker-compose, or any
+  entrypoint. Treat it as dead unless told otherwise; don't assume changes
+  to `app.py` need mirroring there. Its counterpart, `index_new.html`, no
+  longer exists — it was removed along with `index.html` itself when
+  NiceGUI replaced the vanilla-JS SPA (see "Frontend" below).
 - **`src/backend/app/User.py`** is a standalone in-memory `User` class
   (plaintext password, dict-based mood/entry storage) that nothing else in
   the codebase imports. It predates the SQLAlchemy models and is not part of
