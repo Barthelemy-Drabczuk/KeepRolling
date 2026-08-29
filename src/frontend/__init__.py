@@ -18,7 +18,7 @@ from nicegui import app
 
 from . import analytics as analytics_page
 from . import auth as auth_pages
-from . import history, journal, mood_pad
+from . import export, history, journal, mood_pad
 
 QUADRANT_COLOURS: dict[str, str] = {
     "high_energy_unpleasant": "#783020",
@@ -40,3 +40,4 @@ def create_pages() -> None:
     history.create()
     journal.create()
     analytics_page.create()
+    export.create()

@@ -752,3 +752,56 @@ def test_analytics_page_shows_the_empty_prompt_when_logged_out(client) -> None:
 def test_root_page_links_to_analytics(client) -> None:
     """The pad page links across to /analytics, making the analytics page reachable."""
     assert _has_props(client, "/", href="/analytics")
+
+
+# --- FE-10: the export page's rendered shape, and its link from / -------------
+#
+# /export differs from /history, /journal and /analytics in one way that
+# makes it *more* server-observable, not less: it has no page-load fetch at
+# all, so a logged-out visitor is served the same three buttons a logged-in
+# one is. There is no logged-out empty prompt to assert -- the buttons are
+# the page -- and no fetch-failure branch reachable on GET.
+#
+# Everything after the click is manual-verification-only, for the usual
+# reason: the handler reads app.storage.user, which cannot be seeded over
+# HTTP, and nicegui.testing's user/Screen fixtures are banned repo-wide.
+# That covers the GET of /users/{username}/export/{csv,json,pdf}, the
+# ui.download call, and all three response branches (200 -> download,
+# 401 -> login prompt + navigate, anything else -> generic notify).
+#
+# Each button is asserted on caption *and* colour together, per the FE-3a
+# note above: a bare substring is not evidence, since app.colors()
+# serializes "high-energy-pleasant" into every NiceGUI response including
+# its 404 page. Requiring both on one element pins that *the download
+# button* is what carries the caption.
+#
+# The status test passes follow_redirects=False for the same reason FE-7,
+# FE-8a and FE-9a's do: TestClient follows redirects by default, so a plain
+# 200 check would also pass against a guard that 307s to /login.
+
+
+def test_export_page_is_served_without_an_auth_guard(client) -> None:
+    """GET /export returns 200 to a logged-out visitor rather than redirecting to /login."""
+    response = client.get("/export", follow_redirects=False)
+
+    assert response.status_code == 200
+
+
+def test_export_page_offers_a_csv_download_button(client) -> None:
+    """The export page offers a CSV download, captioned and coloured like every action button."""
+    assert _has_props(client, "/export", label="Download CSV", color="high-energy-pleasant")
+
+
+def test_export_page_offers_a_json_download_button(client) -> None:
+    """The export page offers a JSON download alongside the CSV one."""
+    assert _has_props(client, "/export", label="Download JSON", color="high-energy-pleasant")
+
+
+def test_export_page_offers_a_pdf_download_button(client) -> None:
+    """The export page offers a PDF download alongside the CSV and JSON ones."""
+    assert _has_props(client, "/export", label="Download PDF", color="high-energy-pleasant")
+
+
+def test_root_page_links_to_export(client) -> None:
+    """The pad page links across to /export, making the export page reachable."""
+    assert _has_props(client, "/", href="/export")

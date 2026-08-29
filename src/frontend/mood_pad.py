@@ -171,3 +171,4 @@ def create() -> None:
         ui.link("History", "/history")
         ui.link("Journal", "/journal")
         ui.link("Analytics", "/analytics")
+        ui.link("Export", "/export")
