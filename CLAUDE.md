@@ -67,7 +67,11 @@ bind-mounts `./alembic` and `./alembic.ini` into the container.
 `src/backend/app/.env` (gitignored) must define `DATABASE_URL`; `database.py`
 raises at import time if it's unset. `auth.py` reads `SECRET_KEY` (defaults
 to an insecure placeholder if unset — always set it), `ALGORITHM`
-(`HS256`), and hardcodes `ACCESS_TOKEN_EXPIRE_MINUTES = 30`.
+(`HS256`), and hardcodes `ACCESS_TOKEN_EXPIRE_MINUTES = 30`. `app.py`'s
+frontend-mounting block (see "Frontend" below) reads `NICEGUI_STORAGE_SECRET`
+the same way — also defaults to an insecure placeholder if unset, also
+always set it — since it encrypts `app.storage.user`, which is where the
+frontend keeps each logged-in user's JWT.
 
 ## Coding style
 
@@ -186,13 +190,40 @@ self-only.
 
 ### Frontend
 
-`index.html` + `static/app.js` + `static/style.css` is a vanilla-JS SPA
-served directly by FastAPI (`GET /` returns `index.html`; `/static` is
-mounted from `backend/app/static/`). `app.js` calls the API via
-`API_BASE = window.location.origin`, consistently — routes have no `/api`
-prefix (they're mounted directly at `/users/{username}/...`), so keep new
-frontend calls consistent with that rather than assuming a REST-style
-`/api` namespace.
+`src/frontend/` is a NiceGUI multi-page app, a sibling of `src/backend/`
+rather than nested inside it, mounted onto the same FastAPI `app` instance
+at the end of `app.py` via `frontend.configure_theme()`,
+`frontend.create_pages()`, then
+`ui.run_with(app, mount_path="/", storage_secret=STORAGE_SECRET)`. The old
+vanilla-JS SPA (`index.html`/`static/app.js`/`static/style.css`) is gone —
+removed when NiceGUI was wired in.
+
+One module per page, each with a `create() -> None` that registers its
+`@ui.page`(s), called from `frontend/__init__.py`'s `create_pages()`
+(explicit calls, not import-time `@ui.page` decorators — NiceGUI's test
+fixtures re-`exec` `app.py` per test via `runpy`, and Python's module
+cache means decorators wouldn't re-register on a second run):
+`auth.py` (`/login`, `/register`), `mood_pad.py` (`/`, the circumplex
+pad plus nav links to every other page), `history.py` (`/history`),
+`journal.py` (`/journal`), `analytics.py` (`/analytics`), and
+`export.py` (`/export`). `frontend/api.py` isn't a page — it's the shared
+HTTP transport every authenticated page calls through: `client()` returns
+an `httpx.AsyncClient` wired to the same FastAPI `app` via in-process
+ASGI transport (not a real network round trip), and `auth_headers(token)`
+builds the `Authorization: Bearer …` header. `frontend/__init__.py` also
+holds `QUADRANT_COLOURS` (the four circumplex-quadrant hex colours, shared
+by `configure_theme()`'s `app.colors()` call and the analytics charts).
+
+Routes still have no `/api` prefix — they're mounted directly at
+`/users/{username}/...`, and every frontend call goes through
+`api.client()`/`api.auth_headers()` consistently with that, so keep new
+frontend calls consistent with it too rather than assuming a REST-style
+`/api` namespace. No page carries a server-side auth guard: each reads
+`app.storage.user` at render time (or, for pages with no page-load
+fetch, inside its click handler) and reacts to the backend's actual
+401/403 rather than gating the route itself. `src/frontend/` is a pure
+HTTP client of the REST API in `app.py` — it must never import
+`models`, `database`, `auth`, or `analytics` from `src/backend/app/`.
 
 ### Subagents and skills (`.claude/agents/`, `.claude/skills/`)
 
