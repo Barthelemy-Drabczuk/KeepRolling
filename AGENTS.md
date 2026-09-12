@@ -1,6 +1,6 @@
 # Agents
 
-This project uses six Claude Code subagents to enforce the
+This project uses seven Claude Code subagents to enforce the
 requirement-to-commit flow required by `CLAUDE.md`. Their actual
 definitions — the files Claude Code reads — live one-per-file under
 `.claude/agents/`, since that's how subagents are actually loaded; this
@@ -75,6 +75,7 @@ governance and lifecycle for requirements/design/tasks versus code.
 |---|---|---|---|
 | `task-manager-specialist` | `.claude/agents/task-manager-specialist.md` | **Plan / Close.** Breaks an epic into an ordered backlog of atomic requirements before work starts, and closes each one out — commit hash and traceability recorded — after it lands. | No — backlog file only |
 | `requirement-specialist` | `.claude/agents/requirement-specialist.md` | **Red.** Reads a requirement, checks it against the INCOSE bar in `CLAUDE.md`, records the outcome in `.elm/REQUIREMENTS.md` (via the `requirements-traceability` skill), and writes a failing test for it. Refuses to guess at ambiguous requirements — reports back instead. | Tests + the requirements ledger, never implementation |
+| `frontend-designer` | `.claude/agents/frontend-designer.md` | **Visual exploration** (UI-facing requirements only, ahead of design). Sends a brief to a shared Lovable mockup project, gets back a live preview, and translates it into a written ux-patterns/ui-patterns contract for design-specialist. Lovable's own generated code is never merged. | No — reports a contract + preview link only |
 | `design-specialist` | `.claude/agents/design-specialist.md` | **Design.** Fits the requirement into the existing architecture, defines the interface/contract implementation must satisfy (checking `design-patterns`, `ux-patterns`, or `ui-patterns` first, depending on whether the component is backend, interaction, or visual), flags drift before code is written. | No — architecture doc only |
 | `qc-specialist` | `.claude/agents/qc-specialist.md` | **Verify.** Runs the applicable stack's format, lint, and test commands (see `stack-profiles`), logs its own run to `.claude/qc.log`, and reports a pass/fail summary to the main thread. | No — read/run only |
 | `commit-reviewer` | `.claude/agents/commit-reviewer.md` | **Gate.** Reviews the staged diff before any commit: atomicity, commit-message conventions, clean verify state, blast radius on infra diffs. Approves or blocks. | No — read/run only |
@@ -82,7 +83,7 @@ governance and lifecycle for requirements/design/tasks versus code.
 
 ## Stack profiles
 
-None of the six agents hardcode a language or toolchain — `STACK.md`
+None of the seven agents hardcode a language or toolchain — `STACK.md`
 at the repo root maps path prefixes to stacks, and the `stack-profiles`
 skill defines what "red," "verify," and "green" concretely mean for
 each one (currently Python and Terraform, though this repo has no
@@ -129,6 +130,9 @@ task-manager-specialist  ──────────────────�
 requirement-specialist  →  failing test                 (red)   │
         │                                                        │
         ▼                                                        │
+frontend-designer  →  mockup + UI/UX contract  (UI-facing only) │
+        │       (skipped entirely for backend-only requirements)│
+        ▼                                                        │
 design-specialist  →  interface contract, drift check  (design) │
         │                                                        │
         ▼                                                        │
@@ -157,9 +161,11 @@ you want a health check; it never blocks or reorders the flow above.
 Only `requirement-specialist`, `design-specialist`, and the main thread
 ever write test, design, or source content — and each is scoped to one
 lane (tests only, architecture doc only, source respectively).
-`task-manager-specialist`, `qc-specialist`, `commit-reviewer`, and
-`schedule-tracker` are deliberately read/run-only against code and
-tests — their job is to observe, sequence, and report, not to fix — so
+`task-manager-specialist`, `frontend-designer`, `qc-specialist`,
+`commit-reviewer`, and `schedule-tracker` are deliberately read/run-only
+against this repo's code and tests — `frontend-designer`'s calls to
+Lovable touch only its own separate cloud project, never a file here —
+their job is to observe, sequence, and report, not to fix — so
 a problem they find always comes back to the main thread as a
 decision, not a silent correction.
 
@@ -187,7 +193,7 @@ reference the same requirement ID rather than duplicating each other.
 See the `requirements-traceability` skill for the entry schema and the
 commit convention that keeps its git history trustworthy.
 
-## Adding a seventh subagent later
+## Adding an eighth subagent later
 
 Follow the same shape: one Markdown file per agent under
 `.claude/agents/`, YAML frontmatter with at minimum `name` and
