@@ -336,32 +336,57 @@ def test_mood_pad_subscribes_to_drag_mouse_events(client) -> None:
     assert _pad_props(client)["events"] == ["mousedown", "mousemove", "mouseup"]
 
 
+def _assert_covers_box(
+    rect: dict[str, str], left: float, top: float, width: float, height: float
+) -> None:
+    """Assert ``rect`` covers exactly the box ``(left, top, width, height)``."""
+    box = (
+        float(rect.get("x", "nan")),
+        float(rect.get("y", "nan")),
+        float(rect.get("width", "nan")),
+        float(rect.get("height", "nan")),
+    )
+    assert box == (left, top, width, height), (
+        f"rect {box} is not the box at {left},{top},{width},{height}"
+    )
+
+
 def test_mood_pad_fills_top_left_with_high_energy_unpleasant(client) -> None:
-    """The top-left quadrant is filled with FE-2's high-energy/unpleasant colour."""
+    """The reckless_energy zone (2026-09's irregular top-left) is filled with FE-2's
+    high-energy/unpleasant colour -- no longer a full 200x200 quadrant, per the
+    moodometer_chart.jpg reference the 2026-09 redesign draws its zone map from."""
     content = _pad_content(client)
 
-    _assert_covers_quadrant(_rect_filled_with(content, "high-energy-unpleasant"), 0.0, 0.0)
+    _assert_covers_box(_rect_filled_with(content, "high-energy-unpleasant"), 0.0, 0.0, 200.0, 130.0)
 
 
 def test_mood_pad_fills_top_right_with_high_energy_pleasant(client) -> None:
-    """The top-right quadrant is filled with FE-2's high-energy/pleasant colour."""
+    """The energetic_optimism zone is still a full top-right 200x200 quadrant --
+    the one zone the 2026-09 redesign leaves as a clean quadrant rect."""
     content = _pad_content(client)
 
     _assert_covers_quadrant(_rect_filled_with(content, "high-energy-pleasant"), QUADRANT, 0.0)
 
 
 def test_mood_pad_fills_bottom_left_with_low_energy_unpleasant(client) -> None:
-    """The bottom-left quadrant is filled with FE-2's low-energy/unpleasant colour."""
+    """The sinking_despair zone (2026-09's irregular bottom-left) is filled with
+    FE-2's low-energy/unpleasant colour; its right edge now runs to x=204, not 200,
+    to leave room for the resigned_acceptance elbow beside it."""
     content = _pad_content(client)
 
-    _assert_covers_quadrant(_rect_filled_with(content, "low-energy-unpleasant"), 0.0, QUADRANT)
+    _assert_covers_box(
+        _rect_filled_with(content, "low-energy-unpleasant"), 0.0, 200.0, 204.0, 200.0
+    )
 
 
 def test_mood_pad_fills_bottom_right_with_low_energy_pleasant(client) -> None:
-    """The bottom-right quadrant is filled with FE-2's low-energy/pleasant colour."""
+    """The relaxed_contentment zone (2026-09's irregular bottom-right) is filled
+    with FE-2's low-energy/pleasant colour; its left edge now starts at x=266."""
     content = _pad_content(client)
 
-    _assert_covers_quadrant(_rect_filled_with(content, "low-energy-pleasant"), QUADRANT, QUADRANT)
+    _assert_covers_box(
+        _rect_filled_with(content, "low-energy-pleasant"), 266.0, 200.0, 134.0, 200.0
+    )
 
 
 def test_mood_pad_captions_fuck_it_we_ball(client) -> None:
@@ -489,6 +514,36 @@ def test_confirm_button_is_enabled_at_initial_render(client) -> None:
     false, never `disable is False`.
     """
     assert _confirm_button_props(client).get("disable") is not True
+
+
+# --- 2026-09 redesign: the pad's new optional Notes field ---------------------
+#
+# The 2026-09 visual redesign didn't just restyle the pad -- it also gave the
+# pad a ui.textarea wired to MoodBase.notes (REQ-MOOD-5's optional,
+# <=1000-char field), which previously had no frontend surface at all. Same
+# discriminator FE-8b's compose textarea test uses: `type="textarea"` is what
+# distinguishes it from a plain `ui.input` in the rendered props.
+#
+# Only the field's initial-render shape is server-observable here, same as
+# every other form control on this page -- typing into it and the payload it
+# feeds into POST /users/{username}/moods run over NiceGUI's websocket and
+# are manual-verification-only per ARCHITECTURE.md's Testing policy.
+
+NOTES_LABEL = "Notes (optional)"
+NOTES_MAXLENGTH = "1000"
+
+
+def test_root_page_renders_the_notes_textarea(client) -> None:
+    """GET / renders a multi-line "Notes (optional)" field alongside the pad."""
+    assert _has_props(client, "/", label=NOTES_LABEL, type="textarea")
+
+
+def test_notes_textarea_caps_input_at_1000_characters(client) -> None:
+    """The notes textarea carries maxlength=1000, MoodBase.notes' cap, at the input level."""
+    matches = [props for props in _rendered_props(client, "/") if props.get("label") == NOTES_LABEL]
+    assert matches, f"GET / rendered no element labelled {NOTES_LABEL!r}"
+
+    assert str(matches[0].get("maxlength")) == NOTES_MAXLENGTH
 
 
 # --- FE-6a: the pad is keyboard-focusable ------------------------------------
@@ -731,6 +786,15 @@ def test_journal_save_entry_button_uses_high_energy_pleasant(client) -> None:
 # default, so a plain client.get("/analytics").status_code == 200 would
 # also pass against a guard that 307s a logged-out visitor to /login,
 # pinning nothing.
+#
+# 2026-09 redesign addendum: the page also gained a "What this looks like"
+# insights panel, rendering GET /users/{username}/analytics/insights
+# (REQ-ANALYTICS-4, previously exposed by no frontend page at all). Same
+# situation as the distribution/trend charts above -- analytics() only
+# reaches that fetch after the total_entries > 0 branch, which a logged-out
+# visitor (this file's `client` fixture) never reaches, so its initial
+# render is not server-observable either. It is manual-verification-only
+# per the same ARCHITECTURE.md Testing policy, for the same reason.
 
 ANALYTICS_EMPTY_PROMPT = "No mood data to analyse yet."
 
@@ -793,13 +857,23 @@ def test_export_page_offers_a_csv_download_button(client) -> None:
 
 
 def test_export_page_offers_a_json_download_button(client) -> None:
-    """The export page offers a JSON download alongside the CSV one."""
-    assert _has_props(client, "/export", label="Download JSON", color="high-energy-pleasant")
+    """The export page offers a JSON download alongside the CSV one.
+
+    2026-09's redesign makes CSV the page's one primary (filled,
+    high-energy-pleasant) action and JSON/PDF secondary, ink-outlined ones --
+    the "textbook Visual Hierarchy failure" of three identical buttons is
+    the thing being fixed, so JSON no longer carries CSV's colour.
+    """
+    assert _has_props(client, "/export", label="Download JSON")
 
 
 def test_export_page_offers_a_pdf_download_button(client) -> None:
-    """The export page offers a PDF download alongside the CSV and JSON ones."""
-    assert _has_props(client, "/export", label="Download PDF", color="high-energy-pleasant")
+    """The export page offers a PDF download alongside the CSV and JSON ones.
+
+    Same 2026-09 hierarchy change as the JSON button above: PDF is a
+    secondary, ink-outlined action rather than sharing CSV's colour.
+    """
+    assert _has_props(client, "/export", label="Download PDF")
 
 
 def test_root_page_links_to_export(client) -> None:

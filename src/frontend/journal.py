@@ -7,6 +7,15 @@ before the request, why a successful save re-fetches the list instead of
 prepending the POST's own response body, and why the mood select is built
 empty and repopulated after the fetch rather than built once the moods are
 known.
+
+Deviation from the frontend-designer contract, deliberate: the contract's
+Flag 5 recommends showing the meme caption (not Title Case) in the "Link a
+mood" select. ``mood_option_label``/``mood_line`` below are pinned verbatim
+by tests/test_journal.py's Title-Case assertions (``"... UTC — Peak
+Excitement"``), so this redesign keeps both functions and their Title-Case
+output unchanged and adds the meme caption via ``zone_chip`` on the entry
+card instead -- both the caption and the Title Case name end up visible,
+just not on the same element the contract proposed.
 """
 
 from datetime import datetime
@@ -15,7 +24,8 @@ import httpx
 from nicegui import app, ui
 
 from . import api
-from .history import quadrant_label
+from .history import mood_category, quadrant_label
+from .shell import page_shell, zone_chip
 
 JOURNAL_EMPTY = "No journal entries yet."
 LOGIN_PROMPT = "Please log in to view your journal."  # page-load 401
@@ -91,22 +101,50 @@ def create() -> None:
         @ui.refreshable
         def entry_list(entries: list[dict], moods: dict[int, dict]) -> None:
             if entries:
-                with ui.column():
+                with ui.column().classes("w-full gap-4"):
                     for entry in entries:
-                        with ui.card():
-                            ui.label(_format_timestamp(entry["timestamp"]))
-                            ui.label(entry["content"])
-                            line = mood_line(moods.get(entry.get("mood_id")))
-                            if line:
-                                ui.label(line)
+                        linked = moods.get(entry.get("mood_id"))
+                        category = (
+                            mood_category(linked["energy"], linked["valence"]) if linked else None
+                        )
+                        bar_colour = "#5d574c"
+                        if category:
+                            from . import ZONE_COLOURS
+
+                            bar_colour = ZONE_COLOURS.get(category, "#909090")
+                        with (
+                            ui.row()
+                            .classes("w-full items-stretch gap-0")
+                            .style("border:2px solid #1c1a17")
+                        ):
+                            ui.element("div").style(
+                                f"width:6px;background:{bar_colour};"
+                                f"opacity:{1.0 if category else 0.3}"
+                            )
+                            with ui.column().classes("gap-1 p-4 flex-grow"):
+                                with ui.row().classes("w-full justify-between items-center"):
+                                    ui.label(_format_timestamp(entry["timestamp"])).classes(
+                                        "mo-muted text-sm"
+                                    )
+                                    if category:
+                                        zone_chip(category, size="sm")
+                                ui.label(entry["content"]).style("max-width:68ch")
+                                line = mood_line(linked)
+                                if line:
+                                    ui.label(line).classes("mo-muted mo-tabular text-sm")
             else:
-                ui.label(JOURNAL_EMPTY)
+                ui.label(JOURNAL_EMPTY).classes("text-xl font-black")
+                ui.label("Write down what's going on. Linking a mood is optional.").classes(
+                    "mo-muted"
+                )
 
         async def save_entry() -> None:
             content = (compose.value or "").strip()
             if not content or len(content) > CONTENT_MAX:
-                ui.notify(CONTENT_INVALID)
+                validation_message.text = CONTENT_INVALID
+                validation_message.set_visibility(True)
                 return
+            validation_message.set_visibility(False)
             username = app.storage.user.get("username")
             token = app.storage.user.get("token")
             if not username or not token:
@@ -135,27 +173,41 @@ def create() -> None:
             else:
                 ui.notify(GENERIC_FAILURE)
 
-        compose = ui.textarea(label=COMPOSE_LABEL)
-        compose.props(f"maxlength={CONTENT_MAX}")
-        mood_select = ui.select(_mood_options({}), label=MOOD_SELECT_LABEL, value=None)
-        ui.button(SAVE_CAPTION, color="high-energy-pleasant", on_click=save_entry)
+        with page_shell("Journal"):
+            ui.label("Journal").classes("text-3xl font-black")
+            with ui.row().classes("w-full items-start gap-8 flex-wrap"):
+                with (
+                    ui.column()
+                    .classes("mo-surface p-6 gap-3")
+                    .style("border:2px solid #1c1a17;min-width:320px;flex:0 0 38%")
+                ):
+                    ui.label("New entry").classes("text-xl font-black")
+                    compose = ui.textarea(label=COMPOSE_LABEL).classes("w-full")
+                    compose.props(f"maxlength={CONTENT_MAX}")
+                    validation_message = ui.label(CONTENT_INVALID).classes("mo-warn text-sm p-2")
+                    validation_message.set_visibility(False)
+                    mood_select = ui.select(_mood_options({}), label=MOOD_SELECT_LABEL, value=None)
+                    ui.button(
+                        SAVE_CAPTION, color="high-energy-pleasant", on_click=save_entry
+                    ).classes("w-full")
 
-        moods: dict[int, dict] = {}
-        username = app.storage.user.get("username")
-        token = app.storage.user.get("token")
-        if not username or not token:
-            entry_list([], moods)
-            return
+                with ui.column().classes("flex-grow gap-4").style("min-width:320px"):
+                    moods: dict[int, dict] = {}
+                    username = app.storage.user.get("username")
+                    token = app.storage.user.get("token")
+                    if not username or not token:
+                        entry_list([], moods)
+                        return
 
-        response = await _fetch_entries(username, token)
-        if response.status_code == 200:
-            mood_response = await _fetch_moods(username, token)
-            if mood_response.status_code == 200:
-                moods = {mood["id"]: mood for mood in mood_response.json()}
-                mood_select.set_options(_mood_options(moods))
-            entry_list(response.json(), moods)
-        elif response.status_code == 401:
-            ui.label(LOGIN_PROMPT)
-            ui.navigate.to("/login")
-        else:
-            ui.label(GENERIC_FAILURE)
+                    response = await _fetch_entries(username, token)
+                    if response.status_code == 200:
+                        mood_response = await _fetch_moods(username, token)
+                        if mood_response.status_code == 200:
+                            moods = {m["id"]: m for m in mood_response.json()}
+                            mood_select.set_options(_mood_options(moods))
+                        entry_list(response.json(), moods)
+                    elif response.status_code == 401:
+                        ui.label(LOGIN_PROMPT)
+                        ui.navigate.to("/login")
+                    else:
+                        ui.label(GENERIC_FAILURE)

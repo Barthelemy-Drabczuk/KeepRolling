@@ -8,6 +8,14 @@ helper. See ARCHITECTURE.md's MC-2 entry for quadrant_label's current
 contract: it mirrors analytics.get_mood_quadrant_name's 8-category
 nearest-anchor logic (its <, not <=, neutral-band boundary included),
 Title Cased.
+
+The 2026-09 redesign (frontend-designer contract) replaces the plain
+ui.table with a recency strip, a client-side zone filter row, and a
+zone_chip per row -- none of that is server-observable (it sits behind
+the same authenticated fetch tests/test_frontend.py already documents
+as manual-verification-only), so quadrant_label/mood_category/
+category_label/EMPTY_PROMPT below are unchanged: they are what FE-7's
+and MC-2's pinned unit tests actually exercise.
 """
 
 from datetime import datetime
@@ -15,19 +23,13 @@ from datetime import datetime
 from nicegui import app, ui
 
 from . import api
+from .shell import page_shell, zone_chip
 
 EMPTY_PROMPT = "No mood entries yet. Click on the mood board to record your first mood!"
 LOGIN_PROMPT = "Please log in to view your mood history."
 GENERIC_FAILURE = "Could not complete the request."
+NO_FILTER_MATCHES = "No moods match these filters."
 HISTORY_LIMIT = 10
-
-_COLUMNS = [
-    {"name": "timestamp", "label": "Timestamp", "field": "timestamp", "align": "left"},
-    {"name": "energy", "label": "Energy", "field": "energy", "align": "left"},
-    {"name": "valence", "label": "Valence", "field": "valence", "align": "left"},
-    {"name": "quadrant", "label": "Quadrant", "field": "quadrant", "align": "left"},
-    {"name": "notes", "label": "Notes", "field": "notes", "align": "left"},
-]
 
 
 _CAPTION_ANCHORS: dict[str, tuple[float, float]] = {  # (valence, energy)
@@ -39,6 +41,8 @@ _CAPTION_ANCHORS: dict[str, tuple[float, float]] = {  # (valence, energy)
     "deep_despair": (-0.65, -0.65),
     "relaxed_contentment": (0.50, -0.50),
 }
+
+CATEGORY_ORDER: tuple[str, ...] = (*_CAPTION_ANCHORS, "neutral")
 
 
 def mood_category(energy: float, valence: float) -> str:
@@ -69,17 +73,72 @@ def _format_timestamp(raw: str) -> str:
 
 
 def _history_row(mood: dict) -> dict:
-    """Turn one MoodResponse JSON object into one ui.table row."""
+    """Turn one MoodResponse JSON object into one display row."""
     energy = mood["energy"]
     valence = mood["valence"]
     return {
         "id": mood["id"],
         "timestamp": _format_timestamp(mood["timestamp"]),
-        "energy": f"{energy:.2f}",
-        "valence": f"{valence:.2f}",
-        "quadrant": quadrant_label(energy, valence),
+        "energy": f"{energy:+.2f}",
+        "valence": f"{valence:+.2f}",
+        "category": mood_category(energy, valence),
         "notes": mood.get("notes") or "",
     }
+
+
+def _recency_strip(rows: list[dict]) -> None:
+    oldest_first = list(reversed(rows))
+    with ui.row().classes("items-center gap-2 w-full"):
+        ui.label("Oldest").classes("mo-muted text-xs")
+        with ui.row().classes("gap-0 flex-grow").style("border:2px solid #1c1a17"):
+            for row in oldest_first:
+                from . import ZONE_COLOURS
+
+                colour = ZONE_COLOURS.get(row["category"], "#909090")
+                block = ui.element("div").style(
+                    f"background:{colour};height:36px;flex:1;border-right:1.5px solid #1c1a17"
+                )
+                block.props(f'title="{row["timestamp"]} — {category_label(row["category"])}"')
+        ui.label("Newest").classes("mo-muted text-xs")
+
+
+def _filter_row(rows: list[dict], on_change) -> dict[str, bool]:
+    state = {category: True for category in CATEGORY_ORDER}
+
+    with ui.row().classes("items-center gap-2 flex-wrap"):
+        for category in CATEGORY_ORDER:
+            chip = (
+                zone_chip(category, size="sm")
+                .classes("cursor-pointer px-2 py-1 border")
+                .style("border-width:1.5px;border-color:#1c1a17")
+            )
+
+            def toggle(_, category=category, chip=chip) -> None:
+                state[category] = not state[category]
+                chip.style(f"opacity:{1.0 if state[category] else 0.35}")
+                on_change()
+
+            chip.on("click", toggle)
+    return state
+
+
+def _row_line(row: dict) -> None:
+    with (
+        ui.row()
+        .classes("w-full items-center gap-4 py-2")
+        .style("border-bottom:1.5px solid #1c1a17")
+    ):
+        zone_chip(row["category"], size="sm").style("width:180px")
+        ui.label(row["timestamp"]).classes("mo-muted text-sm").style("width:170px")
+        ui.label(row["energy"]).classes("mo-tabular text-right").style("width:70px")
+        ui.label(row["valence"]).classes("mo-tabular text-right").style("width:70px")
+        with ui.label(row["notes"] or "—").classes("mo-muted text-sm flex-grow"):
+            if row["notes"]:
+                # A tooltip element, not a raw title="..." prop: notes is
+                # free user text (up to 1000 chars, MoodBase.notes) and
+                # NiceGUI's tooltip handles escaping it, where an f-string
+                # into a props() attribute string would not.
+                ui.tooltip(row["notes"])
 
 
 def create() -> None:
@@ -90,7 +149,9 @@ def create() -> None:
         username = app.storage.user.get("username")
         token = app.storage.user.get("token")
         if not username or not token:
-            ui.label(EMPTY_PROMPT)
+            with page_shell("History"):
+                ui.label("History").classes("text-3xl font-black")
+                ui.label(EMPTY_PROMPT)
             return
 
         async with api.client() as http:
@@ -100,14 +161,42 @@ def create() -> None:
                 headers=api.auth_headers(token),
             )
 
-        if response.status_code == 200:
+        with page_shell("History"):
+            ui.label("History").classes("text-3xl font-black")
+
+            if response.status_code != 200:
+                if response.status_code == 401:
+                    ui.label(LOGIN_PROMPT)
+                    ui.navigate.to("/login")
+                else:
+                    ui.label(GENERIC_FAILURE)
+                return
+
             moods = response.json()
-            if moods:
-                ui.table(columns=_COLUMNS, rows=[_history_row(m) for m in moods], row_key="id")
-            else:
-                ui.label(EMPTY_PROMPT)
-        elif response.status_code == 401:
-            ui.label(LOGIN_PROMPT)
-            ui.navigate.to("/login")
-        else:
-            ui.label(GENERIC_FAILURE)
+            if not moods:
+                ui.label("Nothing logged yet").classes("text-xl font-black")
+                ui.label("Drop a point on the mood pad to record your first mood.").classes(
+                    "mo-muted"
+                )
+                ui.button(
+                    "Go to the pad",
+                    color="high-energy-pleasant",
+                    on_click=lambda: ui.navigate.to("/"),
+                )
+                return
+
+            rows = [_history_row(m) for m in moods]
+            _recency_strip(rows)
+
+            @ui.refreshable
+            def row_list() -> None:
+                visible = [row for row in rows if filter_state[row["category"]]]
+                if not visible:
+                    ui.label(NO_FILTER_MATCHES).classes("mo-muted")
+                    return
+                with ui.column().classes("w-full gap-0").style("border-top:2px solid #1c1a17"):
+                    for row in visible:
+                        _row_line(row)
+
+            filter_state = _filter_row(rows, lambda: row_list.refresh())
+            row_list()

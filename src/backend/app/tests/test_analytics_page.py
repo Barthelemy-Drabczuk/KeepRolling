@@ -26,29 +26,29 @@ here. What *is* server-observable about the page (the unguarded route,
 the logged-out prompt, the nav link from ``/``) is tested in
 ``tests/test_frontend.py``.
 
-The colour rule, which is FE-9a's one real design decision: MC-1 left
-the classifier with eight categories while FE-2's palette still defines
-four colours, and both the MC-1 and MC-2 ARCHITECTURE.md entries forbid
-extending that palette (its four entries are the *mood pad's* quadrant
-fills). So each category takes the colour of the quadrant its MC-1
-anchor falls in:
+The colour rule, updated by the 2026-09 frontend-designer redesign (Flag
+2's fix): each of the eight categories now takes its own
+``frontend.ZONE_COLOURS`` entry rather than sharing its quadrant
+neighbours' colour. Four are still FE-2's pinned quadrant hexes by
+reference (never duplicated as literals); the other four are new zone
+tokens sampled from the moodometer_chart.jpg reference:
 
-    reckless_energy      (-0.50,  0.50)  high energy / unpleasant  #783020
-    energetic_optimism   ( 0.45,  0.35)  high energy / pleasant    #e0c080
-    peak_excitement      ( 0.60,  0.65)  high energy / pleasant    #e0c080
-    resigned_acceptance  (-0.35, -0.35)  low energy / unpleasant   #98a8c0
-    sinking_despair      (-0.50, -0.50)  low energy / unpleasant   #98a8c0
-    deep_despair         (-0.65, -0.65)  low energy / unpleasant   #98a8c0
-    relaxed_contentment  ( 0.50, -0.50)  low energy / pleasant     #a0a888
-    neutral              central band    -- not a quadrant --      #909090
+    reckless_energy      (-0.50,  0.50)  #783020  (FE-2 high-energy/unpleasant)
+    energetic_optimism   ( 0.45,  0.35)  #e0c080  (FE-2 high-energy/pleasant)
+    peak_excitement      ( 0.60,  0.65)  #ecd980  (new)
+    resigned_acceptance  (-0.35, -0.35)  #e8a05f  (new)
+    sinking_despair      (-0.50, -0.50)  #98a8c0  (FE-2 low-energy/unpleasant)
+    deep_despair         (-0.65, -0.65)  #8494b0  (new)
+    relaxed_contentment  ( 0.50, -0.50)  #a0a888  (FE-2 low-energy/pleasant)
+    neutral              central band    #909090  -- not a zone, no anchor
 
-Three categories therefore share ``#98a8c0`` and two share ``#e0c080``.
-That is deliberate: the shared colour encodes the quadrant, and the
-category is identified by its axis label. It is also exactly why the
-chart is a *bar* chart rather than a pie — a pie would make the repeated
-colours unreadable, whereas on a labelled axis they group the bars
-usefully. For the same "don't create ambiguity" reason the bars carry
-raw counts rather than percentages, which keeps any ``{d}%`` formatter
+Before this change three categories shared ``#98a8c0`` and two shared
+``#e0c080``; that made the distribution chart's shared colours ambiguous
+without reading the axis label, and made the scatter chart's same-colour
+series distinguishable only by name. Eight distinct colours fix both.
+The chart stays a *bar* chart, not a pie, for an unrelated reason now --
+see distribution_options' redesign below -- and the bars still carry raw
+counts rather than percentages, which keeps any ``{d}%`` formatter
 string out of the options dict (see the last test in this file).
 
 Each test imports the function it needs inside its own body, matching
@@ -87,13 +87,20 @@ EXPECTED_ORDER = (
     "neutral",
 )
 
+# The four new (non-quadrant-pinned) zone tokens, sampled from
+# moodometer_chart.jpg -- see frontend.ZONE_COLOURS, the single source
+# of truth these are re-typed from rather than imported.
+PEAK_EXCITEMENT_COLOUR = "#ecd980"
+RESIGNED_ACCEPTANCE_COLOUR = "#e8a05f"
+DEEP_DESPAIR_COLOUR = "#8494b0"
+
 CATEGORY_COLOURS = {
     "reckless_energy": HIGH_ENERGY_UNPLEASANT,
     "energetic_optimism": HIGH_ENERGY_PLEASANT,
-    "peak_excitement": HIGH_ENERGY_PLEASANT,
-    "resigned_acceptance": LOW_ENERGY_UNPLEASANT,
+    "peak_excitement": PEAK_EXCITEMENT_COLOUR,
+    "resigned_acceptance": RESIGNED_ACCEPTANCE_COLOUR,
     "sinking_despair": LOW_ENERGY_UNPLEASANT,
-    "deep_despair": LOW_ENERGY_UNPLEASANT,
+    "deep_despair": DEEP_DESPAIR_COLOUR,
     "relaxed_contentment": LOW_ENERGY_PLEASANT,
     "neutral": NEUTRAL_GREY,
 }
@@ -229,12 +236,12 @@ def _strings(value: Any) -> list[str]:
     ("category", "colour"), sorted(CATEGORY_COLOURS.items()), ids=sorted(CATEGORY_COLOURS)
 )
 def test_each_category_takes_its_anchor_quadrants_colour(category: str, colour: str) -> None:
-    """Each of MC-1's eight categories maps to the FE-2 colour of its anchor's quadrant.
+    """Each of MC-1's eight categories maps to its own frontend.ZONE_COLOURS entry.
 
-    Shared colours are intended, not a bug: the three low-energy/unpleasant
-    categories all answer #98a8c0 and the two high-energy/pleasant ones both
-    answer #e0c080, because the colour encodes the quadrant and the axis
-    label encodes the category.
+    2026-09: each category now has a distinct colour -- four are FE-2's
+    pinned quadrant hexes (still shared with the mood pad's own fills),
+    the other four are new zone tokens. No two categories share a colour
+    any more; distinguishing them no longer depends on the axis label.
     """
     assert _category_colour()(category) == colour
 
@@ -286,10 +293,16 @@ def test_distribution_options_renders_one_bar_per_category() -> None:
 
 
 def test_distribution_options_labels_the_axis_in_title_case() -> None:
-    """The x-axis names the eight categories in Title Case, in CATEGORY_ORDER."""
+    """The category axis names the eight categories in Title Case, in CATEGORY_ORDER.
+
+    2026-09: the chart becomes a horizontal bar (category axis on Y, value
+    axis on X) so the long meme captions read left-aligned instead of
+    needing a rotated x-axis label -- the category labels move from
+    ``xAxis`` to ``yAxis`` accordingly.
+    """
     options = _distribution_options()(PARTIAL_DISTRIBUTION)
 
-    assert options["xAxis"]["data"] == EXPECTED_AXIS_LABELS
+    assert options["yAxis"]["data"] == EXPECTED_AXIS_LABELS
 
 
 def test_distribution_options_takes_each_bars_height_from_the_payload_count() -> None:
@@ -327,9 +340,11 @@ def test_distribution_options_colours_each_bar_by_its_category() -> None:
 def test_distribution_options_uses_a_bar_series_rather_than_a_pie() -> None:
     """Exactly one series, of type "bar".
 
-    Pinned rather than left to taste: with three categories sharing #98a8c0
-    and two sharing #e0c080, a pie chart's slices would be indistinguishable.
-    A bar chart identifies each category by its axis label instead.
+    Pinned rather than left to taste: a pie chart has no natural fixed
+    reading order for eight slices of very different sizes, several near
+    zero, whereas a bar chart's category axis keeps CATEGORY_ORDER's
+    reading order and gives a zero-count category a visible zero-length
+    bar instead of no slice at all.
     """
     series = _distribution_options()(PARTIAL_DISTRIBUTION)["series"]
 
@@ -600,16 +615,19 @@ def test_scatter_options_omits_a_category_absent_from_the_input(label: str) -> N
 
 
 def test_scatter_options_keeps_same_quadrant_categories_as_separate_series() -> None:
-    """Two categories sharing one quadrant colour stay two series, not one.
+    """Two categories in the same quadrant stay two series, each with its own colour.
 
-    sinking_despair and deep_despair both answer #98a8c0, because the colour
-    encodes the quadrant. Grouping is by *category*, so they must still emit
-    separately -- the shared colour is not a grouping key.
+    Before 2026-09, sinking_despair and deep_despair shared #98a8c0 and this
+    test pinned that grouping is by *category*, not by shared colour. Now
+    each category has its own distinct ZONE_COLOURS entry (Flag 2's fix), so
+    the two series are separate for an even more direct reason -- but the
+    grouping-by-category behaviour this test exists to pin is unchanged.
     """
     sinking = _scatter_series_named("Sinking Despair")
     deep = _scatter_series_named("Deep Despair")
 
-    assert sinking["itemStyle"]["color"] == deep["itemStyle"]["color"] == LOW_ENERGY_UNPLEASANT
+    assert sinking["itemStyle"]["color"] == LOW_ENERGY_UNPLEASANT
+    assert deep["itemStyle"]["color"] == DEEP_DESPAIR_COLOUR
     assert sinking["data"] == [[-0.50, -0.50]]
     assert deep["data"] == [[-0.65, -0.65]]
 
@@ -653,13 +671,13 @@ def test_scatter_options_types_every_series_as_scatter() -> None:
 
 
 def test_scatter_options_colours_each_series_by_its_category() -> None:
-    """Each series carries its category's quadrant colour, neutral's grey included."""
+    """Each series carries its category's own zone colour, neutral's grey included."""
     colours = [s["itemStyle"]["color"] for s in _scatter_series()]
 
     assert colours == [
         HIGH_ENERGY_PLEASANT,  # energetic_optimism
         LOW_ENERGY_UNPLEASANT,  # sinking_despair
-        LOW_ENERGY_UNPLEASANT,  # deep_despair
+        DEEP_DESPAIR_COLOUR,  # deep_despair
         LOW_ENERGY_PLEASANT,  # relaxed_contentment
         NEUTRAL_GREY,  # neutral
     ]
