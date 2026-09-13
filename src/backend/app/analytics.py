@@ -90,7 +90,7 @@ def calculate_quadrant_distribution(moods: List[MoodModel]) -> Dict[str, Dict[st
     Returns:
         Dictionary with category names and counts
     """
-    categories = {name: 0 for name in (*_CAPTION_ANCHORS, "neutral")}
+    categories = {name: 0 for name in _CATEGORY_ORDER}
 
     for mood in moods:
         category = get_mood_quadrant_name(mood.energy, mood.valence)
@@ -197,26 +197,47 @@ def get_most_common_mood(moods: List[MoodModel]) -> Dict:
     }
 
 
-_CAPTION_ANCHORS: dict[str, tuple[float, float]] = {
-    "reckless_energy": (-0.50, 0.50),      # Fuck it we ball
-    "energetic_optimism": (0.45, 0.35),    # We are so fucking back
-    "peak_excitement": (0.60, 0.65),       # Let's fucking goooo
-    "resigned_acceptance": (-0.35, -0.35), # It is what it is
-    "sinking_despair": (-0.50, -0.50),     # It's so over
-    "deep_despair": (-0.65, -0.65),        # Mom would be sad
-    "relaxed_contentment": (0.50, -0.50),  # We vibing
-}
+# Literal transcription of src/frontend/pad_art.py's _ZONE_SHAPES, in the
+# reverse of that module's SVG paint order: last painted (visually topmost)
+# is tested first. Keep the two files in sync by hand -- see MC-3 in
+# ARCHITECTURE.md for the drift note. energetic_optimism is deliberately
+# absent -- it is the catch-all every other zone is carved out of.
+# (category, x_min, x_max, y_min, y_max) in the pad's 400x400 pixel space.
+_ZONE_RECTS: tuple[tuple[str, int, int, int, int], ...] = (
+    ("deep_despair", 0, 66, 338, 400),  # "Mom would be sad"
+    ("peak_excitement", 336, 400, 0, 60),  # "Let's fucking goooo"
+    ("resigned_acceptance", 0, 266, 130, 200),  # "It is what it is", upper band
+    ("resigned_acceptance", 204, 266, 200, 400),  # "It is what it is", lower band
+    ("relaxed_contentment", 266, 400, 200, 400),  # "We vibing"
+    ("sinking_despair", 0, 204, 200, 400),  # "It's so over"
+    ("reckless_energy", 0, 200, 0, 130),  # "Fuck it we ball"
+)
+
+# MC-1's original anchor-table insertion order, neutral last -- kept in sync
+# with frontend/history.py's CATEGORY_ORDER by hand, per ARCHITECTURE.md's
+# Boundaries rule (frontend must never import analytics).
+_CATEGORY_ORDER: tuple[str, ...] = (
+    "reckless_energy",
+    "energetic_optimism",
+    "peak_excitement",
+    "resigned_acceptance",
+    "sinking_despair",
+    "deep_despair",
+    "relaxed_contentment",
+    "neutral",
+)
 
 
 def get_mood_quadrant_name(energy: float, valence: float) -> str:
     """Name the mood category an ``(energy, valence)`` pair falls in."""
     if abs(energy) < 0.1 and abs(valence) < 0.1:
         return "neutral"
-    return min(
-        _CAPTION_ANCHORS,
-        key=lambda name: (valence - _CAPTION_ANCHORS[name][0]) ** 2
-        + (energy - _CAPTION_ANCHORS[name][1]) ** 2,
-    )
+    x = (valence + 1) * 200
+    y = (1 - energy) * 200
+    for category, x_min, x_max, y_min, y_max in _ZONE_RECTS:
+        if x_min <= x <= x_max and y_min <= y <= y_max:
+            return category
+    return "energetic_optimism"
 
 
 def detect_mood_patterns(

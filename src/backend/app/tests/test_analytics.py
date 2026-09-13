@@ -1,11 +1,12 @@
-"""Tests for REQ-ANALYTICS-1..4 (see BUSINESS.md) and REQ-ANALYTICS-5 (see
-``elm/REQUIREMENTS.md``).
+"""Tests for REQ-ANALYTICS-1..4 (see BUSINESS.md) and REQ-ANALYTICS-6 (see
+``elm/REQUIREMENTS.md``, which supersedes REQ-ANALYTICS-5).
 
 The REQ-ANALYTICS-1..4 tests are characterization tests: the three analytics
 endpoints in ``app.py`` and the pure functions they delegate to in
 ``analytics.py`` are already implemented, so those are expected to pass as
-written. The REQ-ANALYTICS-5 section at the end of this file is not — it
-specifies the 8-category classifier that replaces the previous 5-category one.
+written. The REQ-ANALYTICS-6 section at the end of this file is not — it
+specifies the region-membership classifier that replaces REQ-ANALYTICS-5's
+nearest-anchor-point one.
 
 Everything except that last section is exercised through the HTTP endpoints
 rather than by importing ``analytics.py`` directly, so the auth/ownership
@@ -23,15 +24,14 @@ Two conventions the tests below depend on:
 * ``/analytics/statistics`` has no implicit window, so tests for it can and do
   use fixed calendar dates.
 
-Category labels in this file follow REQ-ANALYTICS-5's 8-category classifier:
+Category labels in this file follow REQ-ANALYTICS-6's 8-category classifier:
 ``neutral`` for the central ``abs(energy) < 0.1 and abs(valence) < 0.1`` band,
-otherwise the nearest of seven fixed ``(valence, energy)`` caption anchors by
-straight-line distance. Expected labels below are computed from those anchors,
-not from the four-quadrant names the classifier used previously — e.g. a mood
-at ``energy=0.5, valence=0.5`` is nearest to the ``(0.45, 0.35)`` anchor and so
-classifies as ``energetic_optimism``, and ``energy=-0.5, valence=-0.5`` sits
-exactly on the ``(-0.50, -0.50)`` anchor and so classifies as
-``sinking_despair``.
+otherwise whichever of the mood pad's seven painted zones the mood falls in
+once converted to the pad's 400x400 pixel space (``x = (valence + 1) * 200``,
+``y = (1 - energy) * 200``). Expected labels below are read off that zone map —
+e.g. a mood at ``energy=0.5, valence=0.5`` is pixel (300, 100), inside the
+``energetic_optimism`` block, and ``energy=-0.5, valence=-0.5`` is pixel
+(100, 300), inside the ``sinking_despair`` block.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -670,30 +670,44 @@ def test_insights_for_another_username_returns_403(client, auth_headers, make_us
     assert response.status_code == 403
 
 
-# ==================== REQ-ANALYTICS-5: 8-category classification ====================
+# ==================== REQ-ANALYTICS-6: 8-category classification ====================
 #
 # Unlike everything above, this section calls ``analytics.get_mood_quadrant_name``
 # directly rather than through an endpoint: the classifier is a pure function of
 # two floats, and the grid check below evaluates it ~10,000 times, which is not
-# something to route through HTTP. The endpoint-level consequences of the new
+# something to route through HTTP. The endpoint-level consequences of the
 # category set stay pinned by the REQ-ANALYTICS-1/2 tests above and by
 # ``test_export.py``.
+#
+# REQ-ANALYTICS-6 supersedes REQ-ANALYTICS-5: the classifier no longer measures
+# distance to seven caption anchor points, it tests which of the mood pad's
+# seven *painted* zones a mood falls in. The zone rectangles are a literal
+# transcription of ``src/frontend/pad_art.py``'s ``_ZONE_SHAPES``, tested in the
+# reverse of that module's SVG paint order (last-painted first) with both
+# interval ends closed, first match winning, and ``energetic_optimism`` as the
+# catch-all. That ordering *is* the boundary convention: a mood sitting exactly
+# on an edge or corner shared by two zones belongs to the later-painted one —
+# the one that visually covers that pixel. See
+# ``test_a_point_on_a_shared_zone_edge_belongs_to_the_later_painted_zone``.
 
-# The seven caption anchors, in ``(valence, energy)`` — each caption's existing
-# position on the mood pad. ``neutral`` is the eighth category and is not
-# anchor-based: it is the central band, carved out before any distance is
-# measured.
-CAPTION_ANCHORS = {
+# One representative point strictly inside each painted zone, in
+# ``(valence, energy)``. Four are the caption positions REQ-ANALYTICS-5 used as
+# anchors, kept because they still land inside their own zone; the other three
+# (peak_excitement, resigned_acceptance, deep_despair) had to move, because the
+# 2026-09-09 pad redesign left their old anchor outside the zone it named.
+# ``neutral`` is the eighth category and owns no painted zone: it is the central
+# band, carved out before any zone is tested.
+ZONE_INTERIOR_POINTS = {
     "reckless_energy": (-0.50, 0.50),  # "Fuck it we ball"
     "energetic_optimism": (0.45, 0.35),  # "We are so fucking back"
-    "peak_excitement": (0.60, 0.65),  # "Let's fucking goooo"
-    "resigned_acceptance": (-0.35, -0.35),  # "It is what it is"
+    "peak_excitement": (0.75, 0.80),  # "Let's fucking goooo"
+    "resigned_acceptance": (-0.33, 0.15),  # "It is what it is"
     "sinking_despair": (-0.50, -0.50),  # "It's so over"
-    "deep_despair": (-0.65, -0.65),  # "Mom would be sad"
+    "deep_despair": (-0.85, -0.85),  # "Mom would be sad"
     "relaxed_contentment": (0.50, -0.50),  # "We vibing"
 }
 
-ALL_CATEGORIES = set(CAPTION_ANCHORS) | {"neutral"}
+ALL_CATEGORIES = set(ZONE_INTERIOR_POINTS) | {"neutral"}
 
 
 def _pad_grid(step=0.02):
@@ -703,12 +717,14 @@ def _pad_grid(step=0.02):
 
 
 @pytest.mark.parametrize(
-    ("category", "anchor"), sorted(CAPTION_ANCHORS.items()), ids=sorted(CAPTION_ANCHORS)
+    ("category", "point"),
+    sorted(ZONE_INTERIOR_POINTS.items()),
+    ids=sorted(ZONE_INTERIOR_POINTS),
 )
-def test_each_caption_anchor_point_classifies_as_its_own_category(category, anchor):
-    """REQ-ANALYTICS-5: a mood logged exactly at a caption's anchor point gets
-    that caption's category."""
-    valence, energy = anchor
+def test_each_zones_representative_point_classifies_as_its_own_category(category, point):
+    """REQ-ANALYTICS-6: a mood logged strictly inside a painted zone gets that
+    zone's category."""
+    valence, energy = point
 
     assert get_mood_quadrant_name(energy, valence) == category
 
@@ -718,15 +734,15 @@ def test_each_caption_anchor_point_classifies_as_its_own_category(category, anch
     [(0.0, 0.0), (0.05, 0.05), (0.099, -0.099), (-0.099, 0.099)],
 )
 def test_the_central_band_is_neutral(energy, valence):
-    """REQ-ANALYTICS-5: the ``abs(energy) < 0.1 and abs(valence) < 0.1`` band is
-    neutral, unchanged from the previous 5-category classifier."""
+    """REQ-ANALYTICS-6: the ``abs(energy) < 0.1 and abs(valence) < 0.1`` band is
+    neutral, carried forward unchanged from REQ-ANALYTICS-5."""
     assert get_mood_quadrant_name(energy, valence) == "neutral"
 
 
 @pytest.mark.parametrize(("energy", "valence"), [(0.1, 0.0), (0.0, 0.1), (-0.1, 0.0)])
 def test_the_neutral_band_boundary_is_exclusive(energy, valence):
-    """REQ-ANALYTICS-5: 0.1 itself is outside the neutral band (strict ``<``), so
-    a point on the edge is classified by nearest anchor instead."""
+    """REQ-ANALYTICS-6: 0.1 itself is outside the neutral band (strict ``<``), so
+    a point on the edge falls through to the painted zone it sits in instead."""
     assert get_mood_quadrant_name(energy, valence) != "neutral"
 
 
@@ -734,25 +750,54 @@ def test_the_neutral_band_boundary_is_exclusive(energy, valence):
     ("energy", "valence", "expected"),
     [(0.5, 0.5, "energetic_optimism"), (0.75, 0.75, "peak_excitement")],
 )
-def test_two_anchors_in_one_quadrant_are_told_apart_by_distance(energy, valence, expected):
-    """REQ-ANALYTICS-5: classification is per-anchor, not per-quadrant — two
-    points in the same quadrant resolve to different categories."""
+def test_two_points_in_one_quadrant_are_told_apart_by_zone(energy, valence, expected):
+    """REQ-ANALYTICS-6: classification is per painted zone, not per quadrant —
+    two points in the same quadrant resolve to different categories, because
+    ``peak_excitement`` is carved out of ``energetic_optimism``'s corner."""
     assert get_mood_quadrant_name(energy, valence) == expected
 
 
 @pytest.mark.parametrize(
     ("energy", "valence", "expected"),
-    [(0.5, 0.0, "energetic_optimism"), (0.0, -0.5, "resigned_acceptance")],
+    [(0.5, 0.0, "reckless_energy"), (0.0, -0.5, "resigned_acceptance")],
 )
-def test_a_point_on_an_axis_is_classified_by_distance(energy, valence, expected):
-    """REQ-ANALYTICS-5: a point with a zero coordinate lands on its nearest
-    anchor like any other point — the old classifier's catch-all ``else``, which
-    swept these into ``low_energy_unpleasant``, is gone."""
+def test_a_point_on_an_axis_is_classified_by_zone_membership(energy, valence, expected):
+    """REQ-ANALYTICS-6: a point with a zero coordinate lands in whichever zone
+    is painted over it, like any other point — the old classifier's catch-all
+    ``else``, which swept these into ``low_energy_unpleasant``, is gone.
+
+    ``valence=0.0`` is pixel x=200 exactly, the edge ``reckless_energy``
+    (x 0..200) shares with ``energetic_optimism`` (x 200..400); ``reckless_energy``
+    is painted later, so it wins.
+    """
+    assert get_mood_quadrant_name(energy, valence) == expected
+
+
+@pytest.mark.parametrize(
+    ("energy", "valence", "expected"),
+    [
+        (0.35, -0.50, "resigned_acceptance"),
+        (-0.50, 0.02, "resigned_acceptance"),
+        (-0.50, 0.33, "resigned_acceptance"),
+    ],
+    ids=["y=130_reckless_edge", "x=204_sinking_edge", "x=266_relaxed_edge"],
+)
+def test_a_point_on_a_shared_zone_edge_belongs_to_the_later_painted_zone(energy, valence, expected):
+    """REQ-ANALYTICS-6: closed intervals plus reverse-paint-order-first-match
+    *is* the boundary convention — a mood exactly on an edge two zones share
+    belongs to whichever was painted later, i.e. the one that visually covers
+    that pixel. No separate tiebreak rule exists.
+
+    The three cases are pad pixels (100, 130), (204, 300) and (266, 300): the
+    edges ``resigned_acceptance`` shares with ``reckless_energy`` above it,
+    ``sinking_despair`` to its left and ``relaxed_contentment`` to its right.
+    ``resigned_acceptance`` is painted after all three.
+    """
     assert get_mood_quadrant_name(energy, valence) == expected
 
 
 def test_every_point_on_the_pad_resolves_to_one_of_the_eight_categories():
-    """REQ-ANALYTICS-5: the categories tessellate the whole [-1, 1] x [-1, 1]
+    """REQ-ANALYTICS-6: the categories tessellate the whole [-1, 1] x [-1, 1]
     square — no point anywhere on the pad is unclassified or raises."""
     # Keyed by the offending label, valued by one point that produced it, so a
     # failure names the label rather than dumping every grid point.
@@ -766,7 +811,7 @@ def test_every_point_on_the_pad_resolves_to_one_of_the_eight_categories():
 
 
 def test_all_eight_categories_are_reachable_somewhere_on_the_pad():
-    """REQ-ANALYTICS-5: each of the 8 categories owns a non-empty region — none
+    """REQ-ANALYTICS-6: each of the 8 categories owns a non-empty region — none
     is shadowed entirely by its neighbours."""
     produced = {get_mood_quadrant_name(energy, valence) for energy, valence in _pad_grid()}
 
