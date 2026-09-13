@@ -9,6 +9,7 @@ import html
 import json
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
 # NiceGUI applies its palette client-side (colors.js sets --q-* in its
@@ -979,3 +980,135 @@ def test_export_page_offers_a_pdf_download_button(client) -> None:
 def test_root_page_links_to_export(client) -> None:
     """The pad page links across to /export, making the export page reachable."""
     assert _has_props(client, "/", href="/export")
+
+
+# --- REQ-UI-13: the shell nav's logout control -------------------------------
+#
+# Every page except /login and /register renders through shell.page_shell(),
+# which builds two navs from one _NAV_ITEMS table: a sidebar column (class
+# `mo-sidebar`) and a fixed bottom bar (class `mo-bottombar`). REQ-UI-13 adds
+# a "Logout" control to both.
+#
+# What is server-observable, and asserted here: that each of those two
+# containers has, in its subtree, exactly one element captioned "Logout" that
+# subscribes to a `click` event. Both halves were verified against NiceGUI
+# 3.16.0's actual payload rather than assumed -- the element tree
+# `parseElements(String.raw`{...}`)` carries, per element, `text` (a ui.link's
+# or ui.label's caption), `props.label` (a ui.button's caption), and an
+# `events` list, e.g. for /journal's "Save entry" button:
+#
+#     "22":{"tag":"q-btn","class":["w-full"],
+#           "props":{"color":"high-energy-pleasant","label":"Save entry"},
+#           "events":[{"listener_id":"...","type":"click",...}]}
+#
+# while a plain nav link renders with no `events` key at all:
+#
+#     "9":{"tag":"nicegui-link","text":"History",
+#          "props":{"href":"/history","target":"_self"}}
+#
+# The click subscription is asserted deliberately, not as decoration: a bare
+# `ui.link("Logout", "/login")` would satisfy a caption-only check while
+# leaving the JWT sitting in app.storage.user -- exactly the bug this
+# requirement exists to prevent. A click-handled control is the weakest
+# server-observable shape that can do the three things REQ-UI-13 asks for.
+# The caption is matched from either `text` or `props.label` so the choice
+# between ui.button and a click-handled ui.link/ui.label stays open.
+#
+# Everything the handler then does is manual-verification-only per
+# ARCHITECTURE.md's Testing policy, for the usual reason: it runs over
+# NiceGUI's websocket, and app.storage.user cannot be seeded over HTTP. That
+# covers the POST /auth/logout call with the bearer token, the clearing of
+# app.storage.user, and the navigation to /login. The endpoint itself is
+# already covered below the UI in tests/test_auth.py; REQ-UI-13 must not
+# re-test it through the frontend.
+
+LOGOUT_CAPTION = "Logout"
+
+# Every route that renders through page_shell() -- i.e. all of them but
+# /login and /register, which render full-bleed with no shell.
+SHELL_PATHS = ("/", "/history", "/journal", "/analytics", "/export")
+
+# The two navs page_shell() builds, by the class each container carries.
+SIDEBAR_CLASS = "mo-sidebar"
+BOTTOM_BAR_CLASS = "mo-bottombar"
+
+
+def _descendants(elements: dict[str, dict], element: dict) -> list[dict]:
+    """Every element below ``element`` in the rendered tree, depth-first."""
+    found: list[dict] = []
+    for identifier in element.get("children", []):
+        child = elements[str(identifier)]
+        found.append(child)
+        found.extend(_descendants(elements, child))
+    return found
+
+
+def _caption(element: dict) -> str:
+    """The visible caption of an element, whichever way NiceGUI carries it."""
+    return element.get("text") or element.get("props", {}).get("label") or ""
+
+
+def _handles_clicks(element: dict) -> bool:
+    """Does this element subscribe to a click event, rather than just linking?"""
+    return any(event.get("type") == "click" for event in element.get("events", []))
+
+
+def _nav_container(client: TestClient, path: str, container_class: str) -> tuple[dict, dict]:
+    """Return (``path``'s whole element tree, its one ``container_class`` nav)."""
+    elements = _rendered_elements(client, path)
+    containers = [
+        element for element in elements.values() if container_class in element.get("class", [])
+    ]
+    assert len(containers) == 1, (
+        f"GET {path} rendered {len(containers)} .{container_class} navs, expected exactly 1"
+    )
+    return elements, containers[0]
+
+
+def _logout_controls(client: TestClient, path: str, container_class: str) -> list[dict]:
+    """Return the ``Logout``-captioned elements inside ``path``'s named nav."""
+    elements, container = _nav_container(client, path, container_class)
+    return [
+        element
+        for element in _descendants(elements, container)
+        if _caption(element) == LOGOUT_CAPTION
+    ]
+
+
+@pytest.mark.parametrize("path", SHELL_PATHS)
+def test_shell_sidebar_offers_a_logout_control(client, path) -> None:
+    """Every shell page's sidebar nav carries exactly one "Logout" control."""
+    controls = _logout_controls(client, path, SIDEBAR_CLASS)
+
+    assert len(controls) == 1, (
+        f"GET {path}'s sidebar nav carries {len(controls)} {LOGOUT_CAPTION!r} controls, expected 1"
+    )
+
+
+@pytest.mark.parametrize("path", SHELL_PATHS)
+def test_shell_bottom_bar_offers_a_logout_control(client, path) -> None:
+    """Every shell page's bottom bar carries exactly one "Logout" control."""
+    controls = _logout_controls(client, path, BOTTOM_BAR_CLASS)
+
+    assert len(controls) == 1, (
+        f"GET {path}'s bottom bar carries {len(controls)} {LOGOUT_CAPTION!r} controls, expected 1"
+    )
+
+
+@pytest.mark.parametrize("container_class", (SIDEBAR_CLASS, BOTTOM_BAR_CLASS))
+def test_shell_logout_control_handles_clicks(client, container_class) -> None:
+    """Each "Logout" control is click-handled, not a plain href link that leaves the token."""
+    controls = _logout_controls(client, "/", container_class)
+    assert controls, f"GET / rendered no {LOGOUT_CAPTION!r} control in .{container_class}"
+
+    assert all(_handles_clicks(control) for control in controls), (
+        f".{container_class}'s {LOGOUT_CAPTION!r} control subscribes to no click event: {controls}"
+    )
+
+
+@pytest.mark.parametrize("path", ("/login", "/register"))
+def test_auth_pages_carry_no_logout_control(client, path) -> None:
+    """/login and /register render no shell, so they offer nothing to log out of."""
+    captions = [_caption(element) for element in _rendered_elements(client, path).values()]
+
+    assert LOGOUT_CAPTION not in captions

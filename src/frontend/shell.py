@@ -18,7 +18,8 @@ same ordering constraint ``analytics.category_colour`` already documents for
 from contextlib import contextmanager
 from typing import Iterator, Literal
 
-from nicegui import ui
+import httpx
+from nicegui import app, ui
 
 _NAV_ITEMS: tuple[tuple[str, str], ...] = (
     ("Log", "/"),
@@ -27,6 +28,26 @@ _NAV_ITEMS: tuple[tuple[str, str], ...] = (
     ("Analytics", "/analytics"),
     ("Export", "/export"),
 )
+
+
+async def _logout() -> None:
+    """End the session: call POST /auth/logout, clear storage, go to /login.
+
+    REQ-UI-13: the local session ends regardless of what the request
+    returns or whether it raises -- a stateless JWT already unusable to
+    the user must not strand them holding it.
+    """
+    from . import api
+
+    token = app.storage.user.get("token")
+    if token:
+        try:
+            async with api.client() as http:
+                await http.post("/auth/logout", headers=api.auth_headers(token))
+        except httpx.HTTPError:
+            pass
+    app.storage.user.clear()
+    ui.navigate.to("/login")
 
 
 @contextmanager
@@ -65,7 +86,9 @@ def page_shell(active: str) -> Iterator[None]:
                     )
                     if is_active:
                         link.props('aria-current="page"')
-            ui.label().classes("mo-muted text-xs")
+            ui.button("Logout", on_click=_logout).props("flat").classes("no-underline block").style(
+                "padding:8px 12px;color:#1c1a17;font-weight:700;justify-content:flex-start"
+            )
 
         with ui.column().classes("flex-grow gap-6").style("padding:24px;padding-bottom:72px"):
             yield
@@ -82,6 +105,9 @@ def page_shell(active: str) -> Iterator[None]:
                     "font-size:12px;padding:12px 8px;"
                     + ("font-weight:900;color:#1c1a17;" if label == active else "color:#5d574c;")
                 )
+            ui.button("Logout", on_click=_logout).props("flat").classes("text-center").style(
+                "font-size:12px;padding:12px 8px;color:#5d574c;"
+            )
 
 
 def zone_chip(category: str, size: Literal["sm", "md", "lg"] = "sm") -> ui.row:
