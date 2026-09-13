@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Write, Edit, Bash
 model: sonnet
 skills:
   - stack-profiles
+  - caveman
 ---
 
 You are the work-item and backlog manager for this project — you own

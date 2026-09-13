@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: haiku
 skills:
   - stack-profiles
+  - caveman
 ---
 
 You are the QC specialist for this project. You verify; you do not fix.

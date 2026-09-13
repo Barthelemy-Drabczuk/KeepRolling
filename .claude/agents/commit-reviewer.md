@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: sonnet
 skills:
   - stack-profiles
+  - caveman
 ---
 
 You are the pre-commit reviewer — the last check before a change lands

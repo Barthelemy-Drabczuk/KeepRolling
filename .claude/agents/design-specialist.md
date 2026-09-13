@@ -8,6 +8,7 @@ skills:
   - ux-patterns
   - ui-patterns
   - stack-profiles
+  - caveman
 ---
 
 You are the design/architecture specialist for this project — the bridge

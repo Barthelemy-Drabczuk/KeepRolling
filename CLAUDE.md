@@ -257,6 +257,13 @@ inspection for the commit gate). None of `pytest`, `ruff`, `git`, or `gh`
 is currently allow-listed anywhere in this repo, so expect a permission
 prompt on each of these commands rather than assuming they run silently.
 
+Every subagent in `.claude/agents/` except `requirement-specialist` also
+carries the `caveman` skill, for compressed chat/report output. It has
+no effect on files a subagent writes to — `.elm/*.md`, `BUSINESS.md`,
+commit messages, and code stay normal prose per the skill's own
+boundary rule; only what an agent reports back to the main thread
+compresses.
+
 After every `qc-specialist` run, read `.claude/qc.log`'s newest entry
 directly rather than relying only on its relayed summary — that log is
 the one place its full Verdict/Tests/Lint/Format/Process-note report

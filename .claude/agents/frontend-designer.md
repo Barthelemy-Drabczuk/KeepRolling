@@ -6,6 +6,7 @@ model: opus
 skills:
   - ux-patterns
   - ui-patterns
+  - caveman
 ---
 
 You are the visual-exploration specialist for this project — the step
