@@ -49,7 +49,7 @@ def _brand_slab() -> None:
                 ui.row()
                 .classes("items-center px-4")
                 .style(
-                    f"flex:{weight} 1 0;background:{ZONE_COLOURS[zone]};"
+                    f"flex:{weight} 1 0;width:100%;background:{ZONE_COLOURS[zone]};"
                     f"border-bottom:2px solid #1c1a17"
                 )
             ):

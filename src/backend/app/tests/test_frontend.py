@@ -191,6 +191,106 @@ def test_register_page_links_to_login(client) -> None:
     assert _has_props(client, "/register", href="/login")
 
 
+# --- REQ-UI-12: the brand slab's zone bands span the slab's full width -------
+#
+# auth._brand_slab() stacks eight coloured zone bands (colour + caption) down
+# a 32%-wide ui.column on /login and /register. NiceGUI server-renders the
+# whole element tree into each page as
+#
+#     createApp(parseElements(String.raw`{"0":{"tag":"q-layout",...}}`))
+#
+# carrying every element's `class` list and `style` dict verbatim, so how a
+# band is sized is genuinely assertable from the HTML response -- structural,
+# not a smoke check. (This is a different view of the same payload the
+# _has_props helpers above read; those only need one element's props, these
+# need parent/child structure.)
+#
+# The bug this pins (user-confirmed in a browser, TASKS.md VR-FLAG-6):
+# `flex:<weight> 1 0` sizes a band's *height* only, and NiceGUI's own base
+# CSS sets `.nicegui-column { align-items: flex-start }` rather than the
+# browser-native `stretch`, so each band's width collapses to its caption's
+# text width and the coloured bars stop short of the slab's right border at
+# eight different widths.
+#
+# Accepted mechanisms are the ones that win the cascade unconditionally, all
+# of them on the band itself: an explicit `width: 100%` inline style,
+# Tailwind's `w-full`, Quasar's `full-width`, or `align-self: stretch` via
+# `self-stretch` (align-self on a flex item always beats align-items on its
+# parent). `items-stretch` on the *column* is deliberately not accepted: it
+# collides with `.nicegui-column`'s own `align-items: flex-start` at equal CSS
+# specificity, so whether it wins depends on the order nicegui.css and
+# Tailwind's runtime-injected utilities land in -- which is not observable
+# server-side, so a test could not honestly claim it proves the fix.
+
+_ELEMENTS_RE = re.compile(r"parseElements\(String\.raw`(\{.*?\})`\)", re.S)
+
+# Band-level ways of spanning the parent column's full width.
+_SPANNING_CLASSES = frozenset({"w-full", "full-width", "self-stretch"})
+
+
+def _rendered_elements(client: TestClient, path: str) -> dict[str, dict]:
+    """Return ``GET path``'s server-rendered NiceGUI element tree, by element id."""
+    response = client.get(path)
+    assert response.status_code == 200, f"GET {path} -> {response.status_code}"
+
+    match = _ELEMENTS_RE.search(response.text)
+    assert match is not None, f"GET {path} carried no parseElements(...) element tree"
+
+    return json.loads(match.group(1))
+
+
+def _brand_slab_bands(client: TestClient, path: str) -> list[dict]:
+    """Return the eight zone bands of ``path``'s brand slab, in render order."""
+    elements = _rendered_elements(client, path)
+
+    def child(identifier: int) -> dict:
+        return elements[str(identifier)]
+
+    slabs = [
+        element
+        for element in elements.values()
+        if "nicegui-column" in element.get("class", [])
+        and any(child(kid).get("text") == "MOODOMETER" for kid in element.get("children", []))
+    ]
+    assert len(slabs) == 1, f"GET {path} rendered {len(slabs)} brand slabs, expected exactly 1"
+
+    bands = [
+        child(kid)
+        for kid in slabs[0].get("children", [])
+        if {"flex", "background"} <= set(child(kid).get("style", {}))
+    ]
+    assert len(bands) == 8, f"GET {path}'s brand slab rendered {len(bands)} zone bands, expected 8"
+    return bands
+
+
+def _band_spans_slab_width(band: dict) -> bool:
+    """Does this band carry a width mechanism that fills its column, not its text?"""
+    width = band.get("style", {}).get("width", "").replace(" ", "")
+    return width == "100%" or bool(_SPANNING_CLASSES & set(band.get("class", [])))
+
+
+def test_login_page_brand_bands_span_the_slab_width(client) -> None:
+    """Every zone band on /login's brand slab spans the slab's full width."""
+    shrunk = [
+        band["style"]["background"]
+        for band in _brand_slab_bands(client, "/login")
+        if not _band_spans_slab_width(band)
+    ]
+
+    assert not shrunk, f"bands shrink to their caption width instead of filling the slab: {shrunk}"
+
+
+def test_register_page_brand_bands_span_the_slab_width(client) -> None:
+    """Every zone band on /register's brand slab spans the slab's full width."""
+    shrunk = [
+        band["style"]["background"]
+        for band in _brand_slab_bands(client, "/register")
+        if not _band_spans_slab_width(band)
+    ]
+
+    assert not shrunk, f"bands shrink to their caption width instead of filling the slab: {shrunk}"
+
+
 # --- FE-4: the mood pad's initial render at / --------------------------------
 #
 # The pad is `ui.interactive_image(size=(400, 400), events=[...], cross=False,
