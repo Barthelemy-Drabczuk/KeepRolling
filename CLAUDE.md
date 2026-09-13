@@ -226,16 +226,29 @@ fetch, inside its click handler) and reacts to the backend's actual
 HTTP client of the REST API in `app.py` — it must never import
 `models`, `database`, `auth`, or `analytics` from `src/backend/app/`.
 
-### Subagents and skills (`.claude/agents/`, `.claude/skills/`)
+### Subagents and skills (`.claude/agents/`, `.claude/skills/`) — mandatory by default
 
-Three subagents (`requirement-specialist`, `qc-specialist`,
-`commit-reviewer`, described in `AGENTS.md`) implement a red-green-refactor
-gate before commits: turn a `BUSINESS.md` requirement into a failing
-pytest test (per the "Requirements" section above) → implement → verify
-with `pytest` (from `src/backend/app/`, per the cwd note above) and `ruff
-check`/`ruff format --check` (from the repo root, where `pyproject.toml`'s
-`[tool.ruff]` config lives) → review the staged diff → commit. Their
-supporting skills live in `.claude/skills/` (indexed in
+**Every change to this repository goes through the agent pipeline
+described in `AGENTS.md`** — plan → red → design → implementation →
+verify (`pytest` from `src/backend/app/` per the cwd note above, `ruff
+check`/`ruff format --check` from the repo root) → gate → close.
+`AGENTS.md`'s table and diagram are the source of truth for which
+subagent performs each stage and why — don't duplicate that mapping
+here, so this section doesn't go stale every time an agent is added,
+renamed, or reordered (it already had, once).
+
+This is the default and is not optional by omission: do not implement
+directly, skip the red step, or commit without the gate step's approval
+just because a change looks small, purely visual, or urgent.
+The only way to skip a step is the user explicitly authorizing that
+specific piece of work to skip it, in that conversation — a general
+instruction to move fast or "just do it" is not that authorization, and
+one authorized bypass does not carry forward to later, unrelated
+changes. When a step is skipped this way, say so plainly once the work
+is reconciled into `.elm/ARCHITECTURE.md`/`.elm/TASKS.md` — the way the
+2026-09-09 visual redesign's retroactive entries do it — never silently.
+
+Supporting skills for these agents live in `.claude/skills/` (indexed in
 `.claude/SKILLS.md`): `running-pytest-tests` (pytest invocations and how
 to tell a real red state from a broken one), `checking-dependencies-with-
 context7` (look up current dependency API shape — see "Dependency
