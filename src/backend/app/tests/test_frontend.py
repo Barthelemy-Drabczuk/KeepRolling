@@ -235,8 +235,8 @@ _ATTRS_RE = re.compile(r'([\w:.-]+)\s*=\s*"([^"]*)"')
 # (most-central to most-extreme).
 HIGH_ENERGY_UNPLEASANT_CAPTIONS = ["Fuck it we ball"]
 HIGH_ENERGY_PLEASANT_CAPTIONS = ["We are so fucking back", "Let's fucking goooo"]
-LOW_ENERGY_UNPLEASANT_CAPTIONS = ["It is what it is", "It's so over", "Mom would be sad"]
-LOW_ENERGY_PLEASANT_CAPTIONS = ["We vibing"]
+LOW_ENERGY_UNPLEASANT_CAPTIONS = ["It's so over", "Mom would be sad"]
+LOW_ENERGY_PLEASANT_CAPTIONS = ["It is what it is", "We vibing"]
 
 
 def _pad_props(client: TestClient) -> dict:

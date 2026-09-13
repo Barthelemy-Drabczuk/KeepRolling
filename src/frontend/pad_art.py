@@ -60,11 +60,11 @@ _ZONE_SHAPES: tuple[tuple[str, str], ...] = (
 # caption, anchor (x, y), font-size, fill, optional rotate(deg cx cy)
 _CAPTIONS: tuple[tuple[str, float, float, int, str, str], ...] = (
     ("Fuck it we ball", 100, 76, 26, "#ffffff", ""),
-    ("We are so fucking back", 300, 105, 24, INK, "rotate(-38 300 105)"),
-    ("Let's fucking goooo", 368, 32, 15, INK, ""),
-    ("It is what it is", 160, 258, 22, INK, "rotate(18 160 258)"),
+    ("We are so fucking back", 300, 99, 15, INK, "rotate(-10 300 99)"),
+    ("Let's fucking goooo", 369, 31, 7, INK, "rotate(-45 369 31)"),
+    ("It is what it is", 230, 300, 22, INK, "rotate(90 230 300)"),
     ("It's so over", 100, 308, 26, INK, ""),
-    ("Mom would be sad", 33, 370, 9, INK, ""),
+    ("Mom would be sad", 34, 370, 7, INK, "rotate(-45 34 370)"),
     ("We vibing", 333, 300, 24, INK, ""),
 )
 
