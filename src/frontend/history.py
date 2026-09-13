@@ -4,10 +4,12 @@ See ARCHITECTURE.md's FE-7 entry for why app.storage.user must be read
 before the first await, why the failure branches use inline ui.label
 rather than ui.notify, and why this is the second authenticated call
 site, not the third that would trigger extracting an api.auth_headers()
-helper. See ARCHITECTURE.md's MC-2 entry for quadrant_label's current
+helper. See ARCHITECTURE.md's MC-4 entry for quadrant_label's current
 contract: it mirrors analytics.get_mood_quadrant_name's 8-category
-nearest-anchor logic (its <, not <=, neutral-band boundary included),
-Title Cased.
+region-membership logic (a literal hand-transcription of
+frontend/pad_art.py's _ZONE_SHAPES, checked in reverse SVG-paint order
+with closed intervals -- the same table analytics.py's _ZONE_RECTS
+uses, kept in sync by hand across all three copies), Title Cased.
 
 The 2026-09 redesign (frontend-designer contract) replaces the plain
 ui.table with a recency strip, a client-side zone filter row, and a
@@ -32,29 +34,47 @@ NO_FILTER_MATCHES = "No moods match these filters."
 HISTORY_LIMIT = 10
 
 
-_CAPTION_ANCHORS: dict[str, tuple[float, float]] = {  # (valence, energy)
-    "reckless_energy": (-0.50, 0.50),
-    "energetic_optimism": (0.45, 0.35),
-    "peak_excitement": (0.60, 0.65),
-    "resigned_acceptance": (-0.35, -0.35),
-    "sinking_despair": (-0.50, -0.50),
-    "deep_despair": (-0.65, -0.65),
-    "relaxed_contentment": (0.50, -0.50),
-}
+# Literal transcription of src/frontend/pad_art.py's _ZONE_SHAPES, in the
+# reverse of that module's SVG paint order: last painted (visually topmost)
+# is tested first. A second hand-kept copy of the same table
+# src/backend/app/analytics.py's _ZONE_RECTS carries -- see MC-4 in
+# ARCHITECTURE.md for why a third copy is sanctioned here rather than an
+# import (frontend/ must never import analytics/models/database/auth).
+# (category, x_min, x_max, y_min, y_max) in the pad's 400x400 pixel space.
+_ZONE_RECTS: tuple[tuple[str, int, int, int, int], ...] = (
+    ("deep_despair", 0, 66, 338, 400),  # "Mom would be sad"
+    ("peak_excitement", 336, 400, 0, 60),  # "Let's fucking goooo"
+    ("resigned_acceptance", 0, 266, 130, 200),  # "It is what it is", upper band
+    ("resigned_acceptance", 204, 266, 200, 400),  # "It is what it is", lower band
+    ("relaxed_contentment", 266, 400, 200, 400),  # "We vibing"
+    ("sinking_despair", 0, 204, 200, 400),  # "It's so over"
+    ("reckless_energy", 0, 200, 0, 130),  # "Fuck it we ball"
+)
 
-CATEGORY_ORDER: tuple[str, ...] = (*_CAPTION_ANCHORS, "neutral")
+# analytics._CATEGORY_ORDER's order, kept in sync by hand -- ZONE_COLOURS and
+# frontend/analytics.py's own CATEGORY_ORDER are documented as matching it.
+CATEGORY_ORDER: tuple[str, ...] = (
+    "reckless_energy",
+    "energetic_optimism",
+    "peak_excitement",
+    "resigned_acceptance",
+    "sinking_despair",
+    "deep_despair",
+    "relaxed_contentment",
+    "neutral",
+)
 
 
 def mood_category(energy: float, valence: float) -> str:
     """Name the mood category an ``(energy, valence)`` pair falls in."""
     if abs(energy) < 0.1 and abs(valence) < 0.1:
         return "neutral"
-    return min(
-        _CAPTION_ANCHORS,
-        key=lambda name: (
-            (valence - _CAPTION_ANCHORS[name][0]) ** 2 + (energy - _CAPTION_ANCHORS[name][1]) ** 2
-        ),
-    )
+    x = (valence + 1) * 200
+    y = (1 - energy) * 200
+    for category, x_min, x_max, y_min, y_max in _ZONE_RECTS:
+        if x_min <= x <= x_max and y_min <= y <= y_max:
+            return category
+    return "energetic_optimism"
 
 
 def category_label(category: str) -> str:

@@ -33,14 +33,19 @@ neighbours' colour. Four are still FE-2's pinned quadrant hexes by
 reference (never duplicated as literals); the other four are new zone
 tokens sampled from the moodometer_chart.jpg reference:
 
+The ``(valence, energy)`` point beside each is one representative point
+inside that category's painted zone, as MC-4 (REQ-UI-9) re-derived them
+from the zone rectangles — three of them moved off their MC-1 caption
+anchors, which the 2026-09-09 pad redesign left outside their own zone:
+
     reckless_energy      (-0.50,  0.50)  #783020  (FE-2 high-energy/unpleasant)
     energetic_optimism   ( 0.45,  0.35)  #e0c080  (FE-2 high-energy/pleasant)
-    peak_excitement      ( 0.60,  0.65)  #ecd980  (new)
-    resigned_acceptance  (-0.35, -0.35)  #e8a05f  (new)
+    peak_excitement      ( 0.75,  0.80)  #ecd980  (new)
+    resigned_acceptance  (-0.33,  0.15)  #e8a05f  (new)
     sinking_despair      (-0.50, -0.50)  #98a8c0  (FE-2 low-energy/unpleasant)
-    deep_despair         (-0.65, -0.65)  #8494b0  (new)
+    deep_despair         (-0.85, -0.85)  #8494b0  (new)
     relaxed_contentment  ( 0.50, -0.50)  #a0a888  (FE-2 low-energy/pleasant)
-    neutral              central band    #909090  -- not a zone, no anchor
+    neutral              central band    #909090  -- not a zone, no point
 
 Before this change three categories shared ``#98a8c0`` and two shared
 ``#e0c080``; that made the distribution chart's shared colours ambiguous
@@ -496,7 +501,7 @@ def test_trend_options_carries_no_brace_in_any_string() -> None:
 # of MC-1's eight categories:
 #
 #   ( 0.60,  0.20)  energetic_optimism   -- asymmetric, see the point-order test
-#   (-0.65, -0.65)  deep_despair         \  same quadrant, so the same colour,
+#   (-0.85, -0.85)  deep_despair         \  same quadrant, so the same colour,
 #   (-0.50, -0.50)  sinking_despair      /  but still two separate series
 #   (-0.50,  0.50)  relaxed_contentment  -- swaps to reckless_energy if the
 #                                           classifier's arguments are flipped
@@ -517,8 +522,8 @@ SCATTER_MOODS = [
     {
         "id": 45,
         "user_id": 7,
-        "energy": -0.65,
-        "valence": -0.65,
+        "energy": -0.85,
+        "valence": -0.85,
         "notes": None,
         "timestamp": "2026-08-24T22:10:00",
     },
@@ -629,7 +634,7 @@ def test_scatter_options_keeps_same_quadrant_categories_as_separate_series() -> 
     assert sinking["itemStyle"]["color"] == LOW_ENERGY_UNPLEASANT
     assert deep["itemStyle"]["color"] == DEEP_DESPAIR_COLOUR
     assert sinking["data"] == [[-0.50, -0.50]]
-    assert deep["data"] == [[-0.65, -0.65]]
+    assert deep["data"] == [[-0.85, -0.85]]
 
 
 def test_scatter_options_plots_each_point_valence_first_then_energy() -> None:
@@ -646,11 +651,10 @@ def test_scatter_options_plots_each_point_valence_first_then_energy() -> None:
 def test_scatter_options_classifies_each_mood_energy_first_then_valence() -> None:
     """``mood_category`` is called ``(energy, valence)``, the reverse of the point order.
 
-    The mood at energy -0.50 / valence 0.50 sits exactly on relaxed_contentment's
-    anchor, and exactly on reckless_energy's if the two arguments are swapped.
-    MC-1's anchor set is nearly symmetric about the diagonal, so most moods
-    classify identically either way -- this one does not, which is why it is in
-    the fixture.
+    The mood at energy -0.50 / valence 0.50 is pad pixel (300, 300), inside
+    relaxed_contentment's zone; swapping the two arguments makes it pixel
+    (100, 100), inside reckless_energy's. Many moods classify identically
+    either way -- this one does not, which is why it is in the fixture.
     """
     assert "Relaxed Contentment" in [s["name"] for s in _scatter_series()]
     assert "Reckless Energy" not in [s["name"] for s in _scatter_series()]

@@ -16,14 +16,19 @@ below are taken from that function's actual behavior as pinned by
 ``abs(energy) < 0.1 and abs(valence) < 0.1`` (strictly ``<``).
 
 MC-2 (REQ-UI-1) changed that function from a 5-category quadrant chain to
-the 8-category nearest-anchor classifier MC-1 put in ``analytics.py``, so
-the category names below moved with it — neither function's own code
-changed. Each fixture point's expected label is derived from the anchor
-table in ``tests/test_history.py``'s docstring, not carried over: the
-(0.80, 0.60) mood is nearest ``peak_excitement`` (0.60, 0.65), and both
-coordinate-formatting moods — (0.50, -0.20) and (0.666, -0.334) — are
-nearest ``reckless_energy`` (-0.50, 0.50). The near-origin mood is
-inside the unchanged Neutral band.
+an 8-category classifier, and MC-4 (REQ-UI-9) changed how that classifier
+decides: region membership in the mood pad's painted zones rather than
+distance to a caption anchor. Neither function's own code changed either
+time. Each fixture point's expected label is derived from the zone table
+in ``tests/test_history.py``'s docstring, not carried over: the
+``PEAK_EXCITEMENT_MOOD`` at (energy 0.80, valence 0.75) is pad pixel
+(350, 40), inside ``peak_excitement``'s x 336..400 / y 0..60 rect — its
+MC-2 coordinates (0.80, 0.60) are pixel (320, 40), which the redesigned
+pad paints ``energetic_optimism``, so the fixture point moves with the
+geometry. Both coordinate-formatting moods — (0.50, -0.20) and
+(0.666, -0.334) — are pixels (160, 100) and (133.2, 66.8), inside
+``reckless_energy``'s x 0..200 / y 0..130 rect, unchanged by MC-4. The
+near-origin mood is inside the unchanged Neutral band.
 
 Everything else in FE-8c — the ``ui.select``'s population, ``mood_id``
 reaching the POST body, the third card label, the ``null``/outside-window
@@ -50,7 +55,7 @@ PEAK_EXCITEMENT_MOOD = {
     "id": 7,
     "timestamp": "2026-08-27T09:00:00",
     "energy": 0.80,
-    "valence": 0.60,
+    "valence": 0.75,
     "notes": "good morning",
 }
 
@@ -88,7 +93,7 @@ def test_mood_line_is_empty_when_no_mood_is_linked() -> None:
 def test_mood_line_names_the_category_and_both_coordinates() -> None:
     """A linked mood renders as "Mood: <category> (Energy: e · Valence: v)"."""
     assert (
-        _mood_line()(PEAK_EXCITEMENT_MOOD) == "Mood: Peak Excitement (Energy: 0.80 · Valence: 0.60)"
+        _mood_line()(PEAK_EXCITEMENT_MOOD) == "Mood: Peak Excitement (Energy: 0.80 · Valence: 0.75)"
     )
 
 
