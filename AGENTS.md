@@ -12,63 +12,51 @@ by their namespaced name, e.g. `req-to-commit-pipeline:requirement-specialist`.
 
 ## Repository layout
 
-This project spans two git repositories. The code repo is this one;
+This project spans two git repositories, but only one of them is
+public. The code repo is this one, pushed to a public GitHub remote.
 `REQUIREMENTS.md`, `ARCHITECTURE.md`, and `TASKS.md` — "the ledger" in
-the plugin's own terminology — live in a separate ledger repository,
-checked out here as a git submodule at `.elm/`. This is the plugin's
-`ledger-layout` skill's "submodule layout (advanced, opt-in)" option;
-this note is the explicit, named anchor that skill's detection rule
-looks for, so don't remove it without updating that skill's expectation
-too.
+the plugin's own terminology — live in a **separate, private** ledger
+repository at `.elm/` on disk, backed by a local bare repo at
+`/home/percevase/Documents/Projets/moodometer-elm.git`. This is the
+explicit, named anchor the plugin's `ledger-layout` skill's detection
+rule looks for ("an explicit note in this project's own
+`AGENTS.md`/`CLAUDE.md` naming the directory") — don't remove it
+without updating that skill's expectation too.
 
-**Why a submodule and not a plain sibling clone:** a submodule pins one
-exact commit of `.elm/` inside the code repo's own commit history. That
-pointer is what recovers the property a single repo gives you for
-free — "what did the ledger say at the moment this code was committed"
-— which a plain sibling clone, with no such pin, would simply lose.
-
-**Current setup:** done. `.elm/` points at a local bare repo,
-`/home/percevase/Documents/Projets/moodometer-elm.git` — there's no
-hosted remote for it yet. `.elm/`'s own history starts with one seed
-commit carrying the pre-split `TASKS.md`/`ARCHITECTURE.md` content
-(moved here verbatim from this repo's former root-level copies) plus a
-fresh `REQUIREMENTS.md`.
-
-**Known consequence of a local-only origin:** git disables the `file://`
-submodule transport by default as a security guard (CVE-2022-39253), so
-`git submodule update --init` — needed by any *fresh* clone of this code
-repo, including this one before its first use — fails with `transport
-'file' non permis` unless that clone's git config explicitly allows it
-for this one operation:
-```
-git -c protocol.file.allow=always submodule update --init
-```
-This isn't a workaround to "fix" later — it's the honest cost of not
-having hosted the ledger anywhere yet. Move `.elm/` to a real remote
-(anything reachable over `https://`/`ssh://`) and re-point `.gitmodules`
-the same way you'd repoint any submodule, and this restriction goes away
-because the default-denied transport is `file`, not `http`/`ssh`.
+**Deliberately not a registered git submodule of the public repo.**
+It used to be (see git history before this note was added) — pinning
+one exact `.elm/` commit inside the code repo's own history is a
+genuinely nice property (recovers "what did the ledger say at the
+moment this code was committed" for free) — but a submodule reference
+means the code repo's public history carries `.gitmodules` and a gitlink
+pointing at a local machine path, which isn't something a public OSS
+repo's visitors need to see. `.elm/` is now just gitignored: the
+directory still exists on disk exactly as before, is still its own
+independent git repository (still push its own commits to the bare repo
+the same way — `git -C .elm push origin main` — so ledger history
+survives even if `.elm/`'s working checkout is ever lost), and every
+agent still reads/writes `.elm/REQUIREMENTS.md` etc. exactly as before.
+What's gone is only the code repo's public *reference* to it — no
+`git submodule update --init`, no `chore: bump .elm ref` commits, no
+gitlink in `git log`.
 
 **The convention every agent and the main thread follow:**
 - Reads and writes to the ledger go through the `.elm/` path
-  (`.elm/REQUIREMENTS.md`, etc.) — the writer agents already do this.
+  (`.elm/REQUIREMENTS.md`, etc.) — the writer agents already do this,
+  unchanged by the above.
 - Every Gate-mode pass (`qc-gate-specialist`) reviews exactly one
   repository's staged diff: `git -C .elm diff --staged` for a ledger
   change, plain `git diff --staged` from the code repo root for a code
-  change. Never let one commit span both.
-- After a commit lands inside `.elm/`, the code repo needs a small
-  follow-up commit bumping its submodule pointer forward (`git add .elm
-  && git commit -m "chore: bump .elm ref"`) — `project-manager`'s
-  commit-and-close step (Mode B) handles this the same way
-  `task-manager-specialist` used to; the diff is always exactly one
-  pinned commit and needs no further review.
+  change. Never let one commit span both — they're two independent git
+  histories now more than ever, with no pointer tying a code-repo commit
+  to a specific `.elm/` state.
 - Never force-push or rewrite history on either repository past a
-  commit the other one already references — that reference has no
-  fallback the way a same-repo commit hash would.
-
-Expect roughly one extra "bump .elm ref" commit per ledger change —
-that's the real, ongoing cost of the split. It buys independent
-governance and lifecycle for requirements/design/tasks versus code.
+  commit already relied on elsewhere.
+- If `.elm/`'s working checkout ever needs recreating (a fresh machine,
+  a lost clone), it's a plain `git clone
+  /home/percevase/Documents/Projets/moodometer-elm.git .elm` — no
+  submodule ceremony, no `protocol.file.allow` workaround, since it's
+  an ordinary clone rather than a submodule checkout now.
 
 | Subagent | Role in the loop | Can write code? |
 |---|---|---|
