@@ -1,17 +1,25 @@
 # Agents
 
-This project uses seven Claude Code subagents to enforce the
-requirement-to-commit flow required by `CLAUDE.md`. Their actual
-definitions — the files Claude Code reads — live one-per-file under
-`.claude/agents/`, since that's how subagents are actually loaded; this
-file is the human-readable overview that ties them together and is not
-itself read as a subagent definition.
+This project enforces its requirement-to-commit flow with the five
+Claude Code subagents shipped by the **`req-to-commit-pipeline`** plugin
+(`braindot` marketplace), not the bespoke one-per-file agents this repo
+used to define locally. Those local files still exist under
+`.claude/agents/` but are **retired** — no longer part of the active
+loop — kept on disk only as historical reference for how this project's
+process evolved (see "Migration note" below). The plugin's own agent
+definitions live in its installed package, not in this repo; invoke them
+by their namespaced name, e.g. `req-to-commit-pipeline:requirement-specialist`.
 
 ## Repository layout
 
 This project spans two git repositories. The code repo is this one;
-`REQUIREMENTS.md`, `ARCHITECTURE.md`, and `TASKS.md` live in a separate
-ledger repository, checked out here as a git submodule at `.elm/`.
+`REQUIREMENTS.md`, `ARCHITECTURE.md`, and `TASKS.md` — "the ledger" in
+the plugin's own terminology — live in a separate ledger repository,
+checked out here as a git submodule at `.elm/`. This is the plugin's
+`ledger-layout` skill's "submodule layout (advanced, opt-in)" option;
+this note is the explicit, named anchor that skill's detection rule
+looks for, so don't remove it without updating that skill's expectation
+too.
 
 **Why a submodule and not a plain sibling clone:** a submodule pins one
 exact commit of `.elm/` inside the code repo's own commit history. That
@@ -41,28 +49,19 @@ having hosted the ledger anywhere yet. Move `.elm/` to a real remote
 the same way you'd repoint any submodule, and this restriction goes away
 because the default-denied transport is `file`, not `http`/`ssh`.
 
-**Setting up a *new* ledger from scratch** (documented for completeness —
-not needed again on this repo), from the code repo root:
-```
-mkdir .elm && git -C .elm init
-git -C .elm commit --allow-empty -m "chore: initialize .elm ledger repo"
-# push .elm/ to its own remote if you want it shared, then:
-git submodule add <elm-remote-url> .elm
-git add .gitmodules .elm && git commit -m "chore: add .elm ledger as submodule"
-```
-
 **The convention every agent and the main thread follow:**
 - Reads and writes to the ledger go through the `.elm/` path
   (`.elm/REQUIREMENTS.md`, etc.) — the writer agents already do this.
-- Every commit-reviewer pass reviews exactly one repository's staged
-  diff: `git -C .elm diff --staged` for a ledger change, plain `git
-  diff --staged` from the code repo root for a code change. Never let
-  one commit span both.
+- Every Gate-mode pass (`qc-gate-specialist`) reviews exactly one
+  repository's staged diff: `git -C .elm diff --staged` for a ledger
+  change, plain `git diff --staged` from the code repo root for a code
+  change. Never let one commit span both.
 - After a commit lands inside `.elm/`, the code repo needs a small
   follow-up commit bumping its submodule pointer forward (`git add .elm
-  && git commit -m "chore: bump .elm ref"`) — otherwise the code repo's
-  history keeps citing a stale ledger state. commit-reviewer approves
-  these on sight; the diff is always exactly one pinned commit.
+  && git commit -m "chore: bump .elm ref"`) — `project-manager`'s
+  commit-and-close step (Mode B) handles this the same way
+  `task-manager-specialist` used to; the diff is always exactly one
+  pinned commit and needs no further review.
 - Never force-push or rewrite history on either repository past a
   commit the other one already references — that reference has no
   fallback the way a same-repo commit hash would.
@@ -71,52 +70,147 @@ Expect roughly one extra "bump .elm ref" commit per ledger change —
 that's the real, ongoing cost of the split. It buys independent
 governance and lifecycle for requirements/design/tasks versus code.
 
-| Subagent | File | Role in the loop | Can write code? |
-|---|---|---|---|
-| `task-manager-specialist` | `.claude/agents/task-manager-specialist.md` | **Plan / Close.** Breaks an epic into an ordered backlog of atomic requirements before work starts, and closes each one out — commit hash and traceability recorded — after it lands. | No — backlog file only |
-| `requirement-specialist` | `.claude/agents/requirement-specialist.md` | **Red.** Reads a requirement, checks it against the INCOSE bar in `CLAUDE.md`, records the outcome in `.elm/REQUIREMENTS.md` (via the `requirements-traceability` skill), and writes a failing test for it. Refuses to guess at ambiguous requirements — reports back instead. | Tests + the requirements ledger, never implementation |
-| `frontend-designer` | `.claude/agents/frontend-designer.md` | **Visual exploration** (UI-facing requirements only, ahead of design). Sends a brief to a shared Lovable mockup project, gets back a live preview, and translates it into a written ux-patterns/ui-patterns contract for design-specialist. Lovable's own generated code is never merged. | No — reports a contract + preview link only |
-| `design-specialist` | `.claude/agents/design-specialist.md` | **Design.** Fits the requirement into the existing architecture, defines the interface/contract implementation must satisfy (checking `design-patterns`, `ux-patterns`, or `ui-patterns` first, depending on whether the component is backend, interaction, or visual), flags drift before code is written. | No — architecture doc only |
-| `qc-specialist` | `.claude/agents/qc-specialist.md` | **Verify.** Runs the applicable stack's format, lint, and test commands (see `stack-profiles`), logs its own run to `.claude/qc.log`, and reports a pass/fail summary to the main thread. | No — read/run only |
-| `commit-reviewer` | `.claude/agents/commit-reviewer.md` | **Gate.** Reviews the staged diff before any commit: atomicity, commit-message conventions, clean verify state, blast radius on infra diffs. Approves or blocks. | No — read/run only |
-| `schedule-tracker` | `.claude/agents/schedule-tracker.md` | **Health (cross-cutting).** Reads `.elm/TASKS.md` at any time and reports stale items, current velocity, and schedule risk against any stated milestone. Not a step in any single item's flow. | No — read-only, no file of its own |
+| Subagent | Role in the loop | Can write code? |
+|---|---|---|
+| `req-to-commit-pipeline:requirement-specialist` | **Red.** Reads a requirement, checks it against the INCOSE bar in `CLAUDE.md`, records the outcome in `.elm/REQUIREMENTS.md` (via the `requirements-traceability` skill), and writes a failing test for it. Refuses to guess at ambiguous requirements — reports back instead. | Tests + the requirements ledger, never implementation |
+| `req-to-commit-pipeline:frontend-designer` | **Visual exploration** (UI-facing requirements only, ahead of design). Sends a brief to a shared Lovable mockup project, gets back a live preview, and translates it into a written ux-patterns/ui-patterns contract for `solution-specialist`. Lovable's own generated code is never merged. Optional — skip entirely for backend-only requirements. | No — reports a contract + preview link only |
+| `req-to-commit-pipeline:solution-specialist` | **Design mode:** fits the requirement into the existing architecture, defines the interface/contract implementation must satisfy (checking `design-patterns`, `ux-patterns`, or `ui-patterns` first), flags drift before code is written. **Stakeholder-research mode** (any time, outside the loop): market/competitive grounding or prior-art/technical precedent, feeding `BUSINESS.md` — this absorbs what the old `business-specialist`/`research-specialist` stakeholder agents did separately. | Design mode: `.elm/ARCHITECTURE.md` only. Research mode: `BUSINESS.md` only. |
+| `req-to-commit-pipeline:qc-gate-specialist` | **Verify mode** (after implementation): runs the applicable stack's format, lint, and test commands (see `stack-profiles`), logs its run to `.claude/qc.log` — same file and format the old `qc-specialist` used, still read its newest entry directly rather than trusting only the relayed summary. **Gate mode** (before commit): reviews the staged diff for atomicity, commit-message conventions, a re-confirmed clean verify state, and blast radius; approves or blocks. | No — read/run only, both modes |
+| `req-to-commit-pipeline:project-manager` | **Mode A (plan):** breaks an epic into an ordered, WIP-limited backlog of atomic requirements. **Mode B (commit + close):** once Gate mode approves, *writes and runs the commit itself* (plus any requested GitHub follow-up), then closes the task out — commit hash and traceability in `.elm/TASKS.md`. **Mode C (health):** reports `.elm/TASKS.md` as a Kanban board — bottlenecks, staleness, cycle time, schedule risk. | Mode A/B: backlog file + git/GitHub operations, never test/design/source content. Mode C: read-only. |
+
+**Real change from the old pipeline, worth knowing:** `project-manager`'s
+Mode B actually runs `git commit` (and, if asked, push/PR/issue
+operations) once Gate mode approves — the old `task-manager-specialist`
+never touched git itself; the main thread committed after
+`commit-reviewer`'s approval. Point `project-manager` at exactly what
+git/GitHub follow-up you want per requirement if you don't want it
+pushing or opening a PR on its own.
 
 ## Stack profiles
 
-None of the seven agents hardcode a language or toolchain — `STACK.md`
+None of the five agents hardcode a language or toolchain — `STACK.md`
 at the repo root maps path prefixes to stacks, and the `stack-profiles`
 skill defines what "red," "verify," and "green" concretely mean for
-each one (currently Python and Terraform, though this repo has no
-Terraform code yet — the `infra/` row is there for whenever it does;
-add a stack by adding a row to `STACK.md` and a reference file to the
-skill).
+each one (Python and Terraform ship as the plugin's starting profiles,
+though this repo has no Terraform code yet — the `infra/` row is there
+for whenever it does).
 
-This is also the mechanism behind building "the code and what it runs
-on" together: a requirement carries a `Stack:` field in
-`.elm/REQUIREMENTS.md`, and when it needs both infrastructure and code,
-`task-manager-specialist` splits it into two atomic backlog items —
-infrastructure first, since code referencing a resource can't go green
-before that resource exists. Each half goes through the full loop
-independently, against its own stack's profile; `design-specialist`'s
-contract for the requirement is what keeps the two halves consistent
-with each other without either one needing to know the other's
-toolchain.
+**Rewiring the plugin for a fourth stack it doesn't ship, `python-frontend`:**
+this project has a third `STACK.md` row, `python-frontend`, for
+`src/frontend/` — a NiceGUI page's "red"/"verify" means something
+narrower than a plain backend module (most interaction is
+manual-verification-only; only pure functions and server-rendered
+initial state get real automated red/green). The plugin's own
+`stack-profiles` skill (`req-to-commit-pipeline:stack-profiles`,
+deterministically preloaded by `requirement-specialist` and
+`qc-gate-specialist` via their `skills:` frontmatter) ships only the
+generic Python and Terraform profiles and has no way to see a
+project-local addition to it — a plugin agent's preloaded skill resolves
+to the plugin's own bundled copy, never this repo's `.claude/skills/`.
+Rather than relying on remembering to attach it per invocation, the
+profile is inlined below so it travels with this file, which every
+agent already reads as project context:
+
+> **Python / NiceGUI frontend profile (`python-frontend`, `src/frontend/`)**
+>
+> Same language and test runner as the plain `python` profile, but
+> narrower: most of what a page *does* at runtime is not observable
+> through `pytest` at all, and one specific NiceGUI testing mechanism is
+> banned outright.
+>
+> - **Location:** despite living outside `src/backend/`, frontend tests
+>   live with the backend's, under `src/backend/app/tests/` (no separate
+>   frontend test directory) — `src/backend/app/pytest.ini`'s
+>   `pythonpath` entry is what makes `from frontend.history import ...`
+>   resolve from there. Page-shape assertions mostly live in
+>   `test_frontend.py`; a page with its own pure helpers gets its own
+>   `test_<page>.py`/`test_<page>_page.py`, matching sibling pages
+>   (`test_history.py`, `test_analytics_page.py` — the `_page` suffix
+>   avoids colliding with a same-named backend test module).
+> - **Red confirmation:** run `pytest` from `src/backend/app/`, same as
+>   the `python` profile. Frontend-specific trap: a `client.get(...)`
+>   against a route that crashes only on an *authenticated* branch won't
+>   fail the way you'd expect — `app.storage.user` cannot be seeded over
+>   HTTP, so that branch is outside what a `pytest` red state can express
+>   at all.
+> - **Verify commands:** identical to `python` — `ruff format --check .`
+>   / `ruff check .` from the repo root, `pytest` from `src/backend/app/`,
+>   full suite.
+> - **`nicegui.testing.user`/`nicegui.testing.Screen` are banned
+>   outright** — they reset NiceGUI's process-global `ui.run`/`ui.run_with`
+>   state on teardown, corrupting the shared `client` fixture for every
+>   test alphabetically after the one that used them (observed: 82
+>   errors across the suite). Use the plain `client`/`TestClient` fixture
+>   instead — it proves more than it looks like it does: initial
+>   server-rendered content (a label's text, a button's caption/colour
+>   prop, a link's `href`, anything rendered from an initial pre-interaction
+>   read) is genuinely assertable via `client.get(path).text`.
+> - **Live client-side interaction is manual-verification-only** —
+>   pointer drags, real key events, anything needing a websocket
+>   round-trip. Split a page's contract three ways: pure logic (a plain
+>   unit test), initial render (the `client` fixture), live interaction
+>   (manual, via `cd src/backend/app && uvicorn app:app --reload`,
+>   recorded in the commit message).
+> - **Push an assertion down to the REST layer** instead of observing it
+>   through the UI, whenever the same behavior already has a
+>   `python`-profile test — re-asserting the same response shape through
+>   rendered HTML is redundant and more fragile.
+> - **`app.storage.user` cannot be seeded over HTTP** — any branch
+>   depending on a logged-in session is manual-verification-only for the
+>   same reason as live interaction.
+>
+> (Full version, in case this copy ever drifts:
+> `.claude/skills/stack-profiles/references/python-frontend.md`.)
+
+This stack-per-path split is also the mechanism behind building "the
+code and what it runs on" together: a requirement carries a `Stack:`
+field in `.elm/REQUIREMENTS.md`, and when it needs both infrastructure
+and code, `project-manager`'s Mode A splits it into two atomic backlog
+items — infrastructure first, since code referencing a resource can't go
+green before that resource exists. `solution-specialist`'s Design-mode
+contract keeps the two halves consistent without either needing to know
+the other's toolchain.
 
 ## Pattern toolboxes
 
-`design-specialist` draws from three parallel toolboxes when defining
-a contract, built to the same shape as `stack-profiles`: a compact
-symptom table in `SKILL.md`, one reference file per pattern loaded
-only when it's actually selected, so the cost of a toolbox existing is
-nearly zero until a requirement actually needs it. `design-patterns`
-covers software component shape (Strategy, Factory, Builder, ...);
+`solution-specialist`'s Design mode draws from three parallel toolboxes
+when defining a contract, built to the same shape as `stack-profiles`: a
+compact symptom table in `SKILL.md`, one reference file per pattern
+loaded only when it's actually selected. `design-patterns` covers
+software component shape (Strategy, Factory, Builder, ...);
 `ux-patterns` covers interaction and flow (Wizard/Stepper, Progressive
 Disclosure, ...); `ui-patterns` covers visual layout and presentation
 (Card, Modal, Design Tokens, ...). A single requirement can draw from
 more than one — see any toolbox's own note on combining with the
-others. Add a fourth the same way if a new kind of contract recurs
-enough to be worth naming (a `STACK.md` entry for whatever stack
-builds it would usually follow close behind).
+others.
+
+## Flow control: small units, low WIP
+
+The plugin's `project-manager` Mode A enforces a WIP limit per
+in-progress column, read from a header at the top of `.elm/TASKS.md`
+(`todo` / `red` / `design` / `green` / `verify` / `gate` / `done` /
+`blocked`), and `requirement-specialist` fast-checks a word limit on
+requirement text (100 words by default) before the full INCOSE pass.
+
+**Rewiring for this project: preset limits, don't bootstrap your own.**
+`.elm/TASKS.md` predates this plugin feature and has no WIP-limits
+header yet. `project-manager`'s own instructions have it invent modest
+defaults the first time it writes a header — instead, the next time
+`project-manager` touches `.elm/TASKS.md` (Mode A or Mode C), it should
+write exactly these numbers rather than picking its own, since nothing
+in this project's history yet tells it where the real bottlenecks are:
+
+```
+red: 2
+design: 2
+gate: 2
+green: 3
+verify: 3
+```
+
+Mode C's own reporting is what should change these later — raise or
+lower a number once it actually reports a column running over, not
+before.
 
 ## How they fit together
 
@@ -124,7 +218,7 @@ builds it would usually follow close behind).
 requirement / epic
         │
         ▼
-task-manager-specialist  ───────────────────────────────────────┐  (plan)
+project-manager Mode A  ────────────────────────────────────────┐  (plan)
         │  ordered, atomic backlog item                         │
         ▼                                                        │
 requirement-specialist  →  failing test                 (red)   │
@@ -133,53 +227,47 @@ requirement-specialist  →  failing test                 (red)   │
 frontend-designer  →  mockup + UI/UX contract  (UI-facing only) │
         │       (skipped entirely for backend-only requirements)│
         ▼                                                        │
-design-specialist  →  interface contract, drift check  (design) │
+solution-specialist Design mode  →  contract, drift check(design)│
         │                                                        │
         ▼                                                        │
 implementation written                                    (green)│
         │                                                        │
         ▼                                                        │
-qc-specialist  →  pass/fail, lint, format summary       (verify)│
+qc-gate-specialist Verify mode  →  pass/fail summary     (verify)│
         │                                                        │
         ▼                                                        │
-commit-reviewer  →  approve / block                       (gate)│
+qc-gate-specialist Gate mode  →  approve / block           (gate)│
         │                                                        │
         ▼                                                        │
-git commit  ─────────────────────────────────────────────────────┘
-        │
-        ▼
-task-manager-specialist  (close: commit hash + traceability,
-                           surfaces next unblocked item)
+project-manager Mode B  →  commit + optional push/PR,     ──────┘
+                            then close (hash + traceability
+                            in .elm/TASKS.md, surfaces next
+                            unblocked item)
 ```
 
-`schedule-tracker` isn't a step in the diagram above — it reads the
-same `.elm/TASKS.md` that `task-manager-specialist` writes to, at any point
-in a session, and reports on the backlog as a whole rather than on any
-single item's progress. Call it at the start of a session or whenever
-you want a health check; it never blocks or reorders the flow above.
+`solution-specialist`'s Stakeholder-research mode and `project-manager`'s
+Mode C aren't steps in the diagram above — either can run at any point
+in a session, independent of any single item's progress. Call either
+whenever useful; neither blocks or reorders the flow above.
 
-Only `requirement-specialist`, `design-specialist`, and the main thread
-ever write test, design, or source content — and each is scoped to one
-lane (tests only, architecture doc only, source respectively).
-`task-manager-specialist`, `frontend-designer`, `qc-specialist`,
-`commit-reviewer`, and `schedule-tracker` are deliberately read/run-only
-against this repo's code and tests — `frontend-designer`'s calls to
-Lovable touch only its own separate cloud project, never a file here —
-their job is to observe, sequence, and report, not to fix — so
-a problem they find always comes back to the main thread as a
-decision, not a silent correction.
+Only `requirement-specialist`, `solution-specialist`'s Design mode, and
+the main thread ever write test, design, or source content — each
+scoped to one lane. `project-manager`'s Mode A, `frontend-designer`, and
+`qc-gate-specialist` (both modes) are deliberately read/run-only against
+this repo's code and tests. `project-manager`'s Mode B is the one
+exception: it writes git/GitHub state that Gate mode has already
+approved, never content of its own judgment.
 
 ## The golden thread
 
-Every atomic unit of work should be traceable end to end: requirement
-ID → design element (if any) → test file → commit hash, recorded in
-`.elm/TASKS.md` by `task-manager-specialist` alongside a timestamp on every
+Every atomic unit of work should be traceable end to end: requirement ID
+→ design element (if any) → test file → commit hash, recorded in
+`.elm/TASKS.md` by `project-manager` alongside a timestamp on every
 status change. If you can't answer "which commit satisfied requirement
-R-014" by reading `.elm/TASKS.md`, the thread has broken somewhere and it's
-worth finding out where before adding more work on top of it. That same
-timestamp is what makes `schedule-tracker`'s staleness and velocity
-reporting possible — it has nothing to compute from if the timestamp
-goes stale.
+R-014" by reading `.elm/TASKS.md`, the thread has broken somewhere and
+it's worth finding out where before adding more work on top of it. That
+same timestamp is what makes Mode C's staleness and flow reporting
+possible.
 
 ## The requirements ledger
 
@@ -187,63 +275,61 @@ goes stale.
 content — its exact accepted wording, its INCOSE result, and whether
 it's since been superseded. It is not the same thing as `.elm/TASKS.md`:
 `.elm/TASKS.md` tracks a backlog item's *state* (todo → done) and the
-commit hash; `.elm/REQUIREMENTS.md` tracks the requirement's *content* and
-history, append-only, version-controlled the same way code is. Both
+commit hash; `.elm/REQUIREMENTS.md` tracks the requirement's *content*
+and history, append-only, version-controlled the same way code is. Both
 reference the same requirement ID rather than duplicating each other.
 See the `requirements-traceability` skill for the entry schema and the
 commit convention that keeps its git history trustworthy.
 
-## Adding an eighth subagent later
+## Stakeholder research
 
-Follow the same shape: one Markdown file per agent under
-`.claude/agents/`, YAML frontmatter with at minimum `name` and
-`description`, restrict `tools` to the minimum the role needs, and add
-a row to the table above. See `CLAUDE.md` for the process rules these
-agents are enforcing, and `BUSINESS.md` for why those rules exist.
+`solution-specialist`'s Stakeholder-research mode covers what this
+repo's two retired local agents did separately
+(`business-specialist` for market/competitive grounding,
+`research-specialist` for prior-art/technical precedent) — both fed
+`BUSINESS.md` the same way and neither touched the ledger, so they
+merged into one mode covering both flavors of research. Whichever angle
+is invoked, `requirement-specialist` reads `BUSINESS.md` for context but
+is the only agent that decides whether something there is well-formed
+enough to become a requirement — a research finding that surfaces a
+genuine gap goes into `BUSINESS.md`'s "Open Questions" section rather
+than being drafted into a requirement directly.
 
-**Choosing a model tier:** the question isn't how important the agent
-sounds, it's whether anything else in the loop independently re-checks
-the same failure mode. Use `opus` where the agent is the sole
-checkpoint for its class of error (`requirement-specialist`'s INCOSE
-judgment, `design-specialist`'s architectural fit — nothing downstream
-re-derives either). Use `sonnet` where there's real judgment but either
-partial redundancy elsewhere or the judgment is over one bounded,
-already-concrete artifact rather than open-ended interpretation
-(`task-manager-specialist`'s decomposition, `commit-reviewer`'s diff
-review). Use `haiku` where the work is mechanical or a downstream step
-independently re-verifies the same thing anyway (`qc-specialist`,
-fully re-checked by `commit-reviewer`; `schedule-tracker`, read-only
-and advisory with nothing acting on it automatically).
+## Optional external skills
 
-**Giving an agent access to a skill:** a `tools:` allowlist that omits
-`Skill` — every agent above has one — means that agent cannot discover
-or invoke skills at runtime, regardless of what its own instructions
-say. Preload the specific skill(s) it needs instead, with a `skills:`
-frontmatter field naming each by its directory name (e.g.
-`requirements-traceability`, `stack-profiles`). This is deterministic
-— the content is present from the start — rather than relying on the
-agent choosing to look something up.
+`solution-specialist` (Design mode) and `qc-gate-specialist` (Gate mode)
+both check at runtime whether `universal-coding-standards` is available
+and invoke it if so — it ships with the separate `universal-programming`
+plugin (same `braindot` marketplace), which **is already installed** in
+this environment, so both modes get its extra code-quality checks
+automatically. This is a different mechanism from every other skill
+reference here: it's a runtime "if available" check, not a deterministic
+`skills:` frontmatter preload, so its absence would never block the
+pipeline — it just happens to already be present.
 
-## Stakeholder agents
+## Migration note: the old local pipeline
 
-`.claude/agents/stakeholders/` holds an open-ended, user-extensible set
-of upstream agents that feed `BUSINESS.md` — stakeholder needs, market
-context, prior art — rather than participating in the red-design-green-
-verify-gate loop. Claude Code scans agent subfolders recursively, so
-this works the same as the flat pipeline agents; only `name` has to
-stay unique across the whole `.claude/agents/` tree. (If the
-`stakeholders/` folder is brand new, restart the session once so Claude
-Code picks it up — it only watches directories that existed when the
-session started.)
+Before this plugin, this project ran its own seven-plus-stakeholder
+subagent set under `.claude/agents/` (`task-manager-specialist`,
+`requirement-specialist`, `frontend-designer`, `design-specialist`,
+`qc-specialist`, `commit-reviewer`, `schedule-tracker`, plus
+`stakeholders/business-specialist.md` and
+`stakeholders/research-specialist.md`). Those files are untouched on
+disk but are no longer part of the active loop — every responsibility
+they covered now lives in one of the five plugin agents above (see the
+table's role descriptions for the mapping). They have not been deleted;
+removing them is a separate decision the project owner can make once
+comfortable the plugin covers everything they did.
 
-Two examples ship here: `research-specialist` (prior art, published
-research, technical precedent) and `business-specialist` (market
-context, competitive positioning). Add more the same way — a
-`WebSearch`/`WebFetch`-capable agent that appends findings, cited, to
-its own dated section of `BUSINESS.md`, never edits another
-contributor's section, and never touches `.elm/`, any pipeline agent's
-files, or implementation. `requirement-specialist` reads `BUSINESS.md`
-for context but is the only agent that decides whether something there
-is well-formed enough to become a requirement — a stakeholder agent
-that finds a genuine gap surfaces it in `BUSINESS.md`'s "Open
-questions" section rather than drafting the requirement itself.
+## Adding another subagent later
+
+The plugin's five agents cover the core loop; a genuinely new,
+project-specific responsibility that doesn't belong in any of their
+existing modes still follows the old local shape: one Markdown file
+under `.claude/agents/`, YAML frontmatter with at minimum `name` and
+`description`, `tools` restricted to the minimum the role needs, and a
+`skills:` field naming any skill it should preload deterministically.
+Prefer this only for something genuinely local to this repo — anything
+that would make sense in any project using this plugin belongs upstream
+as a new mode on an existing plugin agent instead (see the plugin's own
+`AGENTS.md` for that shape), not duplicated here.

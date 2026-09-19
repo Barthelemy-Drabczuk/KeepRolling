@@ -237,19 +237,28 @@ fetch, inside its click handler) and reacts to the backend's actual
 HTTP client of the REST API in `app.py` — it must never import
 `models`, `database`, `auth`, or `analytics` from `src/backend/app/`.
 
-### Subagents and skills (`.claude/agents/`, `.claude/skills/`) — mandatory by default
+### Subagents and skills (`req-to-commit-pipeline` plugin) — mandatory by default
 
 **Every change to this repository goes through the agent pipeline
 described in `AGENTS.md`** — plan → red → design → implementation →
 verify (`pytest` from `src/backend/app/` per the cwd note above, `ruff
-check`/`ruff format --check` from the repo root) → gate → close.
-`AGENTS.md`'s table and diagram are the source of truth for which
-subagent performs each stage and why — don't duplicate that mapping
-here, so this section doesn't go stale every time an agent is added,
-renamed, or reordered (it already had, once).
+check`/`ruff format --check` from the repo root) → gate → close. The
+pipeline is enforced by the five subagents the `req-to-commit-pipeline`
+plugin ships (`req-to-commit-pipeline:requirement-specialist`,
+`req-to-commit-pipeline:frontend-designer`,
+`req-to-commit-pipeline:solution-specialist`,
+`req-to-commit-pipeline:qc-gate-specialist`,
+`req-to-commit-pipeline:project-manager`), **not** the bespoke agents
+this repo used to define locally under `.claude/agents/` — those files
+are retired; see `AGENTS.md`'s "Migration note" for the old-to-new
+mapping. `AGENTS.md`'s table and diagram are the source of truth for
+which subagent (and which mode, for the three that have more than one)
+performs each stage and why — don't duplicate that mapping here, so
+this section doesn't go stale every time the plugin's own agent set
+changes.
 
 This is the default and is not optional by omission: do not implement
-directly, skip the red step, or commit without the gate step's approval
+directly, skip the red step, or commit without Gate mode's approval
 just because a change looks small, purely visual, or urgent.
 The only way to skip a step is the user explicitly authorizing that
 specific piece of work to skip it, in that conversation — a general
@@ -258,28 +267,34 @@ one authorized bypass does not carry forward to later, unrelated
 changes. When a step is skipped this way, say so plainly once the work
 is reconciled into `.elm/ARCHITECTURE.md`/`.elm/TASKS.md` — the way the
 2026-09-09 visual redesign's retroactive entries do it — never silently.
+Note also that `project-manager`'s Mode B (the close step) now runs the
+commit itself once Gate mode approves, rather than the main thread
+committing after a plain "approved" verdict — see `AGENTS.md` for what
+that changes.
 
-Supporting skills for these agents live in `.claude/skills/` (indexed in
-`.claude/SKILLS.md`): `running-pytest-tests` (pytest invocations and how
-to tell a real red state from a broken one), `checking-dependencies-with-
-context7` (look up current dependency API shape — see "Dependency
-changes" above), and `reviewing-atomic-commits` (read-only `git`/`gh`
-inspection for the commit gate). None of `pytest`, `ruff`, `git`, or `gh`
-is currently allow-listed anywhere in this repo, so expect a permission
-prompt on each of these commands rather than assuming they run silently.
+Supporting skills for these agents ship with the plugin itself
+(`req-to-commit-pipeline:stack-profiles`,
+`req-to-commit-pipeline:checking-dependencies-with-context7`,
+`req-to-commit-pipeline:reviewing-atomic-commits`,
+`req-to-commit-pipeline:requirements-traceability`,
+`req-to-commit-pipeline:ledger-layout`, plus the pattern toolboxes) —
+not `.claude/skills/`, whose same-named local copies these agents do
+**not** automatically load (a plugin agent's `skills:` frontmatter
+preloads its own plugin's bundled copy). This matters concretely for
+`stack-profiles`: this repo's local copy has a third `python-frontend`
+row the plugin's bundled copy lacks — see `AGENTS.md`'s "Known gap"
+callout under "Stack profiles" before invoking any agent against
+`src/frontend/`. This repo's own `running-pytest-tests` skill under
+`.claude/skills/` is unaffected by any of this and still applies as
+before. None of `pytest`, `ruff`, `git`, or `gh` is currently
+allow-listed anywhere in this repo, so expect a permission prompt on
+each of these commands rather than assuming they run silently.
 
-Every subagent in `.claude/agents/` except `requirement-specialist` also
-carries the `caveman` skill, for compressed chat/report output. It has
-no effect on files a subagent writes to — `.elm/*.md`, `BUSINESS.md`,
-commit messages, and code stay normal prose per the skill's own
-boundary rule; only what an agent reports back to the main thread
-compresses.
-
-After every `qc-specialist` run, read `.claude/qc.log`'s newest entry
-directly rather than relying only on its relayed summary — that log is
-the one place its full Verdict/Tests/Lint/Format/Process-note report
-lands, append-only, and terse relays have caused real back-and-forth on
-this project before.
+After every `qc-gate-specialist` Verify-mode run, read `.claude/qc.log`'s
+newest entry directly rather than relying only on its relayed summary —
+that log is the one place its full Verdict/Tests/Lint/Format/
+Process-note report lands, append-only, and terse relays have caused
+real back-and-forth on this project before.
 
 # Commit conventions
 
