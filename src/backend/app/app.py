@@ -1218,7 +1218,10 @@ async def export_moods_pdf(
 # entry for why page registration is a function call, not import-time
 # decorators, and why this block stays last (after every REST route).
 
-STORAGE_SECRET = os.getenv("NICEGUI_STORAGE_SECRET", "change-me-in-production")
+STORAGE_SECRET = os.getenv("NICEGUI_STORAGE_SECRET")
+
+if not STORAGE_SECRET:
+    raise ValueError("NICEGUI_STORAGE_SECRET environment variable is not set")
 
 frontend.configure_theme()
 frontend.create_pages()

@@ -8,6 +8,10 @@ import os
 # this URL is never actually connected to.
 os.environ.setdefault("DATABASE_URL", "postgresql://unused:unused@localhost/unused")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
+# Same reason, for app.py's module-level STORAGE_SECRET: once REQ-SEC-2
+# removes its placeholder fallback, importing app below raises without
+# this. Never a real secret — the suite signs nothing with it.
+os.environ.setdefault("NICEGUI_STORAGE_SECRET", "test-storage-secret")
 
 import app as app_module
 import pytest

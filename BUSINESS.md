@@ -144,6 +144,23 @@ under "Open Questions" rather than guessed into a REQ.
   `start_date`/`end_date` query parameters in `YYYY-MM-DD` format and
   return 400 for a value that fails to parse as that format.
 
+## Security & Configuration
+
+Requirements about how the application reads its own secrets at startup,
+rather than about a request/response. `database.py` already establishes
+the pattern these two follow: read the variable, and raise `ValueError`
+naming it when it holds no usable value.
+
+- **REQ-SEC-1**: Importing `auth.py` shall raise `ValueError`, with a
+  message naming `SECRET_KEY`, when the `SECRET_KEY` environment
+  variable holds no non-empty value (unset, or set to the empty string),
+  rather than substituting a default JWT signing key.
+- **REQ-SEC-2**: Importing `app.py` shall raise `ValueError`, with a
+  message naming `NICEGUI_STORAGE_SECRET`, when the
+  `NICEGUI_STORAGE_SECRET` environment variable holds no non-empty value
+  (unset, or set to the empty string), rather than substituting a
+  default `app.storage.user` encryption secret.
+
 ## Known Defects
 
 Not new requirements — tracked non-conformance against the requirements
@@ -198,10 +215,14 @@ channel; how token refresh should behave, since the current 30-minute
 expiry with no renewal path is deliberate per `CLAUDE.md`, not a bug):
 
 - No CI pipeline running `pytest`/`ruff` automatically on push/PR.
-- `SECRET_KEY` (`auth.py`) and `NICEGUI_STORAGE_SECRET` (`app.py`, added
-  for the frontend epic) both fall back to a hardcoded placeholder string
-  if their env var is unset, rather than failing startup — same pattern,
-  same fix needed in both places once decided.
+- ~~`SECRET_KEY` (`auth.py`) and `NICEGUI_STORAGE_SECRET` (`app.py`,
+  added for the frontend epic) both fall back to a hardcoded placeholder
+  string if their env var is unset, rather than failing startup — same
+  pattern, same fix needed in both places once decided.~~ — resolved by
+  the project owner ahead of the first public push: both shall fail
+  startup, mirroring `database.py`'s `DATABASE_URL` check. No longer
+  backlog; now REQ-SEC-1 and REQ-SEC-2 under "Security &
+  Configuration" above.
 - No rate limiting on `POST /auth/login` (or any other endpoint).
 - No refresh-token or password-reset flow — once an access token
   expires, the only way back in is logging in again with the password.
