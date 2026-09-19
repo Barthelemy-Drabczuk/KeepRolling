@@ -9,6 +9,15 @@ model of affect (energy × valence). Users log moods on a 2D grid and add
 journal entries; the API also computes statistics/patterns/insights and
 exports data as CSV/JSON/PDF.
 
+## Codebase research
+
+This repo is indexed by CodeGraph (`.codegraph/`). Any codebase research —
+locating a symbol, tracing call paths, understanding blast radius before an
+edit — must go through CodeGraph (the `codegraph_explore` MCP tool, or
+`codegraph explore "<query>"` from the shell) rather than grep/find/reading
+files directly. Reach for it first; fall back to direct file reads only for
+what CodeGraph doesn't cover (e.g. non-code files it doesn't index).
+
 ## Commands
 
 The project is managed with **pixi** (`pyproject.toml` → `[tool.pixi.tasks]`).
