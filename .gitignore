@@ -17,8 +17,11 @@ src/backend/app/.env
 .pytest_cache/
 .omc/
 .nicegui/
-.claude/qc.log
 .codegraph/
+
+# Local workflow tooling — not for the public repo (see AGENTS.md)
+.claude/
+.elm/
 
 # OS
 .DS_Store
