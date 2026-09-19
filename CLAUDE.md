@@ -64,14 +64,16 @@ bind-mounts `./alembic` and `./alembic.ini` into the container.
 
 ### Environment
 
-`src/backend/app/.env` (gitignored) must define `DATABASE_URL`; `database.py`
-raises at import time if it's unset. `auth.py` reads `SECRET_KEY` (defaults
-to an insecure placeholder if unset — always set it), `ALGORITHM`
-(`HS256`), and hardcodes `ACCESS_TOKEN_EXPIRE_MINUTES = 30`. `app.py`'s
-frontend-mounting block (see "Frontend" below) reads `NICEGUI_STORAGE_SECRET`
-the same way — also defaults to an insecure placeholder if unset, also
-always set it — since it encrypts `app.storage.user`, which is where the
-frontend keeps each logged-in user's JWT.
+`src/backend/app/.env` (gitignored) must define `DATABASE_URL`, `SECRET_KEY`,
+and `NICEGUI_STORAGE_SECRET`; `database.py`, `auth.py`, and `app.py`'s
+frontend-mounting block (see "Frontend" below) each raise `ValueError` at
+import time if their respective variable is unset (REQ-SEC-1/REQ-SEC-2 —
+`BUSINESS.md`'s "Security & Configuration" section) rather than falling
+back to a placeholder. `auth.py` also hardcodes `ALGORITHM` (`HS256`) and
+`ACCESS_TOKEN_EXPIRE_MINUTES = 30`. `NICEGUI_STORAGE_SECRET` encrypts
+`app.storage.user`, which is where the frontend keeps each logged-in
+user's JWT — `docker-compose.yml`'s `web` service requires it the same
+way, via `${NICEGUI_STORAGE_SECRET:?set a storage secret}`.
 
 ## Coding style
 
