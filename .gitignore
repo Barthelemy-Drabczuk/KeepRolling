@@ -18,6 +18,7 @@ src/backend/app/.env
 .omc/
 .nicegui/
 .claude/qc.log
+.codegraph/
 
 # OS
 .DS_Store
