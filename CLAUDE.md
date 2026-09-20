@@ -25,7 +25,7 @@ Linting/formatting (`ruff`) live in the `dev` feature/environment, so use
 `pixi run -e dev ...` for those two, and plain `pixi run ...` for the rest:
 
 ```bash
-pixi run -e test test           # pytest (needs -e test: pytest lives in the test feature, not default)
+cd src/backend/app && pixi run -e test pytest   # full suite — see note below
 pixi run -e dev lint            # ruff check .
 pixi run -e dev format-check    # ruff format --check .
 pixi run -e dev format          # ruff format . (auto-fixes formatting)
@@ -33,6 +33,17 @@ pixi run db-test                # sanity-check the DB connection (src/backend/db
 pixi run db-migrate             # alembic upgrade head
 pixi run db-revision -m "message"   # alembic revision --autogenerate
 ```
+
+**Not `pixi run -e test test` from the repo root** — that invokes the
+`test` task (`pyproject.toml`'s `[tool.pixi.tasks]`, plain `"pytest"`),
+which pixi always runs at the workspace root regardless of the
+invoking shell's `cwd`. This has been verified: it fails with
+`ModuleNotFoundError: No module named 'database'`, the same bare-import
+issue the dev-server note above describes — `src/backend/app/`'s bare
+imports need to actually be the process's cwd, and a named pixi task
+doesn't inherit one. Running `pytest` as an ad-hoc `pixi run` command
+(not the named task) does respect the invoking shell's `cwd`, which is
+why `cd src/backend/app && pixi run -e test pytest` above works.
 
 **Running the dev server — do not use `pixi run dev` as-is.** That task runs
 `uvicorn src.backend.app.app:app` from the repo root, but every module in
