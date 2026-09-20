@@ -203,3 +203,8 @@ def test_repeated_nudges_do_not_accumulate_binary_float_drift() -> None:
 def test_an_unrecognised_key_leaves_the_mood_unchanged(key: str) -> None:
     """Any non-arrow key is a no-op: nudge returns its input untouched."""
     assert _nudge()(0.3, -0.2, key) == (0.3, -0.2)
+
+
+def test_branch_protection_verification_temporary() -> None:
+    """Temporary: proves branch protection blocks merge on a failing check. Removed before merge."""
+    assert False
