@@ -23,7 +23,7 @@ services:
     # Environment variables for the web service
     environment:
       - DATABASE_URL=postgresql://moodometer:moodometer_pass@db:5432/moodometer
-      - SECRET_KEY=your-secret-key-change-in-production
+      - SECRET_KEY=${SECRET_KEY:?set a secret key}
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - NICEGUI_STORAGE_SECRET=${NICEGUI_STORAGE_SECRET:?set a storage secret}
