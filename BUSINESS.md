@@ -182,8 +182,21 @@ REQ-CI-3 are the two triggers, REQ-CI-4 is the merge enforcement that
 - **REQ-CI-4**: `main`'s branch protection shall list the test check as
   a required status check, so a pull request cannot be merged while it
   is failing.
+- **REQ-CI-5**: A GitHub Actions workflow shall run `ruff check` from
+  the repository root on every push to `main` and every pull request
+  targeting `main` — the existing CI workflow's triggers — surfacing
+  each violation as an inline GitHub annotation, with
+  `continue-on-error` set so that a non-zero `ruff check` exit does not
+  change the workflow run's conclusion.
+- **REQ-CI-6**: A GitHub Actions workflow shall run `ruff format
+  --check` from the repository root on every push to `main` and every
+  pull request targeting `main`, including in runs where `ruff check`
+  has already exited non-zero, with `continue-on-error` set so that a
+  non-zero `ruff format --check` exit does not change the workflow run's
+  conclusion.
 
-Three notes these three carry that no other requirement here does.
+Three notes REQ-CI-2/REQ-CI-3/REQ-CI-4 carry that no other requirement
+here does.
 None of them is verifiable by a local command — verification is an
 observed workflow run, and for REQ-CI-4 a repository setting read back
 via `gh api`. REQ-CI-4 changes no tracked file at all, so it produces no
@@ -194,13 +207,27 @@ least one successful run: a required status check that has never
 reported blocks every merge to `main` indefinitely, with no failing
 check to point at.
 
-Still open, deliberately not a requirement yet: whether `ruff check` /
-`ruff format --check` run in CI, and whether they gate. Measured
-baseline as of 2026-09-20 — 309 `ruff check` errors (217 auto-fixable)
-and 9 files `ruff format --check` would reformat, the known debt
-`CLAUDE.md`'s "Coding style" section describes. The standing
-recommendation is a separate, never-required `lint` job so the debt is
-visible as per-line annotations without CI being red from day one.
+REQ-CI-5 and REQ-CI-6 close what this section previously left open —
+whether `ruff check` / `ruff format --check` run in CI, and whether they
+gate. Decided by the project owner on 2026-09-20: they run, on the same
+workflow and triggers, and they do **not** gate. Measured baseline as of
+2026-09-20 — 309 `ruff check` errors (217 auto-fixable) and 9 files
+`ruff format --check` would reformat, the known debt `CLAUDE.md`'s
+"Coding style" section describes and deliberately does not clear as a
+side effect of unrelated work. A gating lint job would therefore make
+`main` red from its first run; a non-gating one makes the debt visible
+as per-line annotations instead, and stops it growing.
+
+Two consequences worth stating with them. The lint job is never added to
+`main`'s required status checks — that list stays exactly `test` per
+REQ-CI-4 — which is a design prohibition recorded in
+`.elm/ARCHITECTURE.md` rather than part of REQ-CI-5's wording, since a
+required-check list is a repository setting and mixing it into a
+workflow-file requirement is what got the rejected REQ-CI-1 rejected.
+And turning the lint job into a gating one later, once the baseline
+reaches zero, is a deliberate decision that gets its own requirement at
+the time — not something to slip in by deleting a `continue-on-error`
+line.
 
 ## Known Defects
 
@@ -261,9 +288,10 @@ the current 30-minute expiry with no renewal path is deliberate per
   Actions, running the full `pytest` suite on pushes to `main` and on
   pull requests targeting `main`, with a failing suite blocking the
   merge. No longer backlog; now REQ-CI-2, REQ-CI-3 and REQ-CI-4 under
-  "Continuous Integration" above. The `ruff` half of this line is *not*
-  resolved — whether lint/format run in CI, and whether they gate, is
-  still open; see that section's closing note.
+  "Continuous Integration" above. The `ruff` half of this line was
+  resolved separately on the same day: lint and format checks run on the
+  same workflow and triggers but never gate — now REQ-CI-5 and REQ-CI-6
+  in that same section.
 - ~~`SECRET_KEY` (`auth.py`) and `NICEGUI_STORAGE_SECRET` (`app.py`,
   added for the frontend epic) both fall back to a hardcoded placeholder
   string if their env var is unset, rather than failing startup — same
