@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: prefix-dev/setup-pixi@v0.10.2
+        with:
+          pixi-version: v0.69.0
+          environments: test
+          locked: true
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+
+      - name: Run backend test suite
+        working-directory: src/backend/app
+        run: pixi run -e test pytest
