@@ -161,6 +161,47 @@ naming it when it holds no usable value.
   (unset, or set to the empty string), rather than substituting a
   default `app.storage.user` encryption secret.
 
+## Continuous Integration
+
+Requirements about what runs automatically on the hosted repository,
+rather than about the application itself. The three below replace the
+rejected REQ-CI-1 (`.elm/REQUIREMENTS.md`), whose single sentence
+conflated two triggers with an ambiguous "blocking"; REQ-CI-2 and
+REQ-CI-3 are the two triggers, REQ-CI-4 is the merge enforcement that
+"blocking" turned out to mean.
+
+- **REQ-CI-2**: A GitHub Actions workflow shall run the backend test
+  suite (`pytest`, invoked with `src/backend/app` as the working
+  directory) on every push to `main`, without `continue-on-error`, so
+  that a non-zero pytest exit concludes the workflow run as `failure`.
+- **REQ-CI-3**: A GitHub Actions workflow shall run the backend test
+  suite (`pytest`, invoked with `src/backend/app` as the working
+  directory) on every pull request targeting `main`, without
+  `continue-on-error`, so that a non-zero pytest exit concludes the
+  workflow run as `failure`.
+- **REQ-CI-4**: `main`'s branch protection shall list the test check as
+  a required status check, so a pull request cannot be merged while it
+  is failing.
+
+Three notes these three carry that no other requirement here does.
+None of them is verifiable by a local command — verification is an
+observed workflow run, and for REQ-CI-4 a repository setting read back
+via `gh api`. REQ-CI-4 changes no tracked file at all, so it produces no
+diff to review and no commit hash for the golden thread; its record is a
+`TASKS.md` row naming the owner action and its date. And REQ-CI-4 must
+be applied only *after* REQ-CI-2/REQ-CI-3's workflow has completed at
+least one successful run: a required status check that has never
+reported blocks every merge to `main` indefinitely, with no failing
+check to point at.
+
+Still open, deliberately not a requirement yet: whether `ruff check` /
+`ruff format --check` run in CI, and whether they gate. Measured
+baseline as of 2026-09-20 — 309 `ruff check` errors (217 auto-fixable)
+and 9 files `ruff format --check` would reformat, the known debt
+`CLAUDE.md`'s "Coding style" section describes. The standing
+recommendation is a separate, never-required `lint` job so the debt is
+visible as per-line annotations without CI being red from day one.
+
 ## Known Defects
 
 Not new requirements — tracked non-conformance against the requirements
@@ -208,13 +249,21 @@ provider/protocol for "calendar integration"):
 
 Identified during the requirements pass above (not from the README) —
 these aren't vague so much as unscoped: each needs a decision only the
-project owner can make before it's a testable `REQ-*` (a CI provider and
-which checks gate merges; whether login should be throttled and by what
-rule; whether "forgot password" needs email delivery or some other
-channel; how token refresh should behave, since the current 30-minute
-expiry with no renewal path is deliberate per `CLAUDE.md`, not a bug):
+project owner can make before it's a testable `REQ-*` (which checks gate
+merges — the CI provider itself is now decided; whether login should be
+throttled and by what rule; whether "forgot password" needs email
+delivery or some other channel; how token refresh should behave, since
+the current 30-minute expiry with no renewal path is deliberate per
+`CLAUDE.md`, not a bug):
 
-- No CI pipeline running `pytest`/`ruff` automatically on push/PR.
+- ~~No CI pipeline running `pytest`/`ruff` automatically on push/PR.~~ —
+  resolved by the project owner on 2026-09-20: build it, on GitHub
+  Actions, running the full `pytest` suite on pushes to `main` and on
+  pull requests targeting `main`, with a failing suite blocking the
+  merge. No longer backlog; now REQ-CI-2, REQ-CI-3 and REQ-CI-4 under
+  "Continuous Integration" above. The `ruff` half of this line is *not*
+  resolved — whether lint/format run in CI, and whether they gate, is
+  still open; see that section's closing note.
 - ~~`SECRET_KEY` (`auth.py`) and `NICEGUI_STORAGE_SECRET` (`app.py`,
   added for the frontend epic) both fall back to a hardcoded placeholder
   string if their env var is unset, rather than failing startup — same
