@@ -19,7 +19,7 @@ This creates four main emotional quadrants with distinct mood zones, allowing us
 - **RESTful API**: FastAPI backend for easy integration
 - **Database Integration**: PostgreSQL for persistent data storage
 - **Containerized Deployment**: Docker and Docker Compose for easy setup
-- **CI/CD Pipeline**: GitLab CI with security scanning
+- **CI/CD Pipeline**: GitHub Actions runs the backend test suite and a non-gating ruff lint
 
 ## Architecture
 
@@ -37,7 +37,7 @@ moodometer/
 │   ├── db.py                   # Database connection utility
 │   ├── Dockerfile              # Container image definition
 │   └── docker-compose.yml      # Multi-container orchestration
-├── .gitlab-ci.yml              # CI/CD pipeline configuration
+├── .github/workflows/ci.yml    # CI/CD pipeline configuration (GitHub Actions)
 └── README.md                   # This file
 ```
 
@@ -47,7 +47,7 @@ moodometer/
 - **Database**: PostgreSQL with SQLAlchemy ORM
 - **Frontend**: HTML5, CSS3, Bootstrap 3
 - **Deployment**: Docker, Docker Compose
-- **CI/CD**: GitLab CI with SAST and Secret Detection
+- **CI/CD**: GitHub Actions (`.github/workflows/ci.yml`)
 
 ## Mood Board Zones
 
@@ -199,9 +199,9 @@ pytest
 
 ### Code Quality
 
-The project uses GitLab CI for automated security scanning:
-- **SAST (Static Application Security Testing)**: Analyzes code for vulnerabilities
-- **Secret Detection**: Prevents accidental credential commits
+The project uses GitHub Actions (`.github/workflows/ci.yml`) on pushes to `main` and on pull requests targeting `main`:
+- **`test` job**: runs the backend test suite (`pixi run -e test pytest` from `src/backend/app`)
+- **`lint` job**: runs `ruff check` and `ruff format --check`; non-gating (`continue-on-error`), so a lint failure never blocks a merge
 
 ### Project Structure
 
